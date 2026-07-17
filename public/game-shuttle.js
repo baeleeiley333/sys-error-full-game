@@ -1,13 +1,14 @@
 /**
- * Contour Shuttle — WebHID + 键盘模式检测
+ * AB Shuttle 3 · Bluetooth
+ * 驱动映射键盘快捷键 → 游戏继续；可选 WebHID（USB 更稳，蓝牙请优先键盘模式）
  */
 (function () {
   'use strict';
 
+  var DEVICE = window.SYS_ERROR_SHUTTLE_DEVICE || 'AB Shuttle 3 · Bluetooth';
   var CONTOUR_VENDOR_IDS = [0x0b33, 0x05f3];
   var connected = false;
   var opening = false;
-  var lastError = '';
   var lastReportSig = '';
 
   function dispatchAdvance(detail) {
@@ -29,12 +30,10 @@
     var sig = reportSignature(data);
     if (!sig || sig === lastReportSig) return;
     lastReportSig = sig;
-
     var allZero = !sig.split(',').some(function (b) { return b !== '0'; });
     if (allZero) return;
-
-    dispatchAdvance({ device: device.productName, sig: sig });
-    updateStatus(true, (device.productName || 'Shuttle') + ' ●');
+    dispatchAdvance({ device: DEVICE, sig: sig });
+    updateStatus(true, DEVICE + ' ●');
   }
 
   function attachContourDevice(device) {
@@ -48,7 +47,7 @@
       device._sysErrorShuttleAttached = false;
       connected = false;
       lastReportSig = '';
-      updateStatus(false, '已断开 — 点击重连');
+      updateStatus(false);
       reopenKnownDevices();
     });
 
@@ -56,14 +55,10 @@
 
     return device.open().then(function () {
       connected = true;
-      lastError = '';
-      var label = device.productName || 'Contour Shuttle';
-      updateStatus(true, label + ' OK');
+      updateStatus(true, DEVICE + ' · WebHID');
       return true;
-    }).catch(function (err) {
+    }).catch(function () {
       device._sysErrorShuttleAttached = false;
-      lastError = String(err && err.message ? err.message : err);
-      console.warn('Shuttle open failed', device.productName, err);
       return false;
     });
   }
@@ -80,25 +75,23 @@
   }
 
   function showHelp(reason) {
-    var lines = [
-      '未能连接 Shuttle：' + (reason || '未知原因'),
+    alert([
+      DEVICE,
+      reason || '',
       '',
-      '【推荐】不用 WebHID，改用键盘模式：',
-      '1. 打开 Contour Shuttle 驱动软件',
-      '2. 把你要用的按钮映射成 Enter 或 Space',
-      '3. 回到游戏页面，先点一下屏幕，再按 Shuttle',
+      '【蓝牙 · 推荐设置】',
+      '1. Windows 蓝牙已配对 AB Shuttle 3',
+      '2. Contour 驱动里把按钮映射为 Enter / Space / 任意单键',
+      '3. 回到游戏，先点一下屏幕，再按 Shuttle',
+      '4. 无需 WebHID；鼠标点击也可继续',
       '',
-      '若仍要用 WebHID：',
-      '• 完全退出 Contour 后台（任务栏图标）',
-      '• Chrome / Edge 桌面版',
-      '• Connect 弹窗里选中设备并点「连接」',
-    ];
-    alert(lines.join('\n'));
+      'WebHID 仅作可选（蓝牙通常不可用）。',
+    ].filter(Boolean).join('\n'));
   }
 
   function requestShuttleAccess() {
     if (!navigator.hid) {
-      showHelp('浏览器不支持 WebHID — 请用键盘模式（映射 Enter）');
+      showHelp('浏览器不支持 WebHID。\n蓝牙 AB Shuttle 3 请用驱动键盘快捷键。');
       return Promise.resolve(false);
     }
     if (opening) return Promise.resolve(false);
@@ -108,12 +101,12 @@
       filters: [{ vendorId: 0x0b33 }, { vendorId: 0x05f3 }],
     }).then(function (devices) {
       if (!devices || !devices.length) {
-        showHelp('未选择设备');
+        showHelp('未选择设备。\n蓝牙 AB Shuttle 3 请直接用驱动快捷键，不必连接 WebHID。');
         return false;
       }
       return Promise.all(devices.map(attachContourDevice)).then(function (results) {
         if (results.some(Boolean)) return true;
-        showHelp('设备被占用 — 请退出 Contour 驱动后重试，或改用键盘模式');
+        showHelp('WebHID 无法打开。\n蓝牙 AB Shuttle 3 请用驱动映射 Enter，照样可继续游戏。');
         return false;
       });
     }).catch(function (err) {
@@ -128,13 +121,13 @@
     var el = document.getElementById('shuttle-status');
     if (!el) return;
     if (on) {
-      el.textContent = text || 'Shuttle connected';
+      el.textContent = text || DEVICE;
       el.classList.add('on');
-      el.title = 'Shuttle 已连接';
+      el.title = DEVICE + ' 已就绪';
     } else {
-      el.textContent = text || 'Shuttle · 键盘模式';
+      el.textContent = DEVICE;
       el.classList.remove('on');
-      el.title = '在 Contour 驱动里映射快捷键；点击可尝试 WebHID';
+      el.title = DEVICE + ' — 在 Contour 驱动映射快捷键；点击可尝试 WebHID';
     }
   }
 
@@ -143,8 +136,8 @@
     var btn = document.createElement('button');
     btn.id = 'shuttle-status';
     btn.type = 'button';
-    btn.textContent = 'Shuttle · 键盘模式';
-    btn.title = '蓝牙/USB Shuttle：在驱动里映射快捷键即可；可选 WebHID 连接';
+    btn.textContent = DEVICE;
+    btn.title = DEVICE + ' — Contour 驱动快捷键即可继续；点击尝试 WebHID';
     btn.addEventListener('click', function () {
       requestShuttleAccess();
     });
@@ -153,9 +146,8 @@
 
   function init() {
     injectUi();
-    reopenKnownDevices().then(function (ok) {
-      if (!ok) updateStatus(false);
-    });
+    updateStatus(false);
+    reopenKnownDevices();
   }
 
   if (document.readyState === 'loading') {
@@ -165,6 +157,7 @@
   }
 
   window.SYS_ERROR_SHUTTLE = {
+    device: DEVICE,
     connect: requestShuttleAccess,
     reconnect: reopenKnownDevices,
     get connected() { return connected; },

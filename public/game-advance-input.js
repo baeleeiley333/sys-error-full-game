@@ -50,7 +50,7 @@
           btn.classList.add('on');
         } else if (!armed) {
           btn.classList.remove('on');
-          btn.textContent = 'Shuttle · 键盘模式';
+          btn.textContent = (window.SYS_ERROR_SHUTTLE_DEVICE || 'AB Shuttle 3 · BT');
         }
       }, 800);
     }
@@ -62,7 +62,7 @@
       hintEl.id = 'advance-hint';
       document.body.appendChild(hintEl);
     }
-    hintEl.textContent = '点击屏幕 或 按 Shuttle 快捷键 / 任意键 → 继续';
+    hintEl.textContent = '点击屏幕 或 按 AB Shuttle 3（蓝牙快捷键）→ 继续';
     hintEl.classList.add('show');
   }
 
@@ -125,7 +125,7 @@
     }
 
     if (!armed && label) {
-      flashInput(label);
+      flashInput((window.SYS_ERROR_SHUTTLE_DEVICE || 'AB Shuttle 3') + ' · ' + label);
     }
   }
 

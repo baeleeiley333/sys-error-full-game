@@ -17,26 +17,29 @@ Step 1 Finish → Step 2 人脸扫描 → 结尾 OK
   → 过渡视频 → 白光 + Loading → Step 4 手势表演 → 系统关机 → credits → 自动回到 Step 1
 ```
 
-## Shuttle 控制器（蓝牙 / USB · AB Shuttle 3）
+## AB Shuttle 3 · 蓝牙快捷键
 
-### 推荐：驱动键盘快捷键（蓝牙同样适用）
+本装置默认控制器：**AB Shuttle 3（Bluetooth）**
 
-1. 在 **Contour Shuttle** 驱动里，把按钮映射成任意 **键盘快捷键**（如 `Enter`、`Space`、`F13`、单键等）
-2. 打开游戏页面，**先点一下屏幕**（让页面获得焦点）
-3. 在「Press to …」等待点 **按 Shuttle 按钮** → 等同于按键盘，**自动继续**
-4. **不需要** Connect Shuttle / WebHID
+### 设置步骤
 
-游戏已支持：**任意键、组合键**（如 `Ctrl+Enter`）+ **鼠标点击** 都会触发继续。
+1. Windows **蓝牙配对** AB Shuttle 3  
+2. 打开 **Contour Shuttle** 驱动，把常用按钮映射为 **Enter** / **Space** / 任意单键  
+3. 打开游戏 → **先点一下屏幕** → 在 Press to … 等待点 **按 Shuttle**  
+4. **不必** Connect WebHID（蓝牙走键盘模式即可）
 
-等待时屏幕底部会显示：`点击屏幕 或 按 Shuttle 快捷键 / 任意键 → 继续`  
-按 Shuttle 后右上角会短暂显示 `✓ Enter`（或你映射的键名），表示已收到信号。
+### 继续方式
 
-### 可选：WebHID 直连
+| 输入 | 说明 |
+|------|------|
+| **AB Shuttle 3 蓝牙快捷键** | 驱动映射的任意键 / 组合键 |
+| **鼠标点击** | 屏幕任意位置 |
+| WebHID（可选） | 右上角按钮；蓝牙一般不用 |
 
-- 右上角 **Shuttle · 键盘模式** 可点击尝试 WebHID（USB 更稳定；蓝牙 通常用键盘模式即可）
-- 需 Chrome / Edge；若连不上，继续用键盘映射 + 鼠标即可
+等待时提示：`点击屏幕 或 按 AB Shuttle 3（蓝牙快捷键）→ 继续`  
+按键成功时右上角：`✓ AB Shuttle 3 · Bluetooth · Enter`（示例）
 
-实现：`public/game-advance-input.js` + `public/game-shuttle.js`
+实现：`game-shuttle-device.js` + `game-advance-input.js`
 
 ## 40 秒无人操作自动重置
 
