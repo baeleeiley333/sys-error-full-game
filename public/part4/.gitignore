@@ -1,4 +1,6 @@
-samples.json
+# Bundled training data for SYS_ERROR installation is tracked (samples.json).
+# Ignore local overrides only:
+samples.local.json
 node_modules/
 .vercel/
 .netlify/
