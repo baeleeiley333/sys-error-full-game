@@ -12,7 +12,6 @@
   var armed = false;
   var handler = null;
   var options = { anyKey: true, allowClick: true, allowKeyboard: true, allowShuttle: true };
-  var hintEl = null;
   var lastKeyAt = 0;
 
   function defaults() {
@@ -39,7 +38,7 @@
     return parts.join('+') || main;
   }
 
-  function flashInput(source) {
+  function flashShuttleStatus(source) {
     var btn = document.getElementById('shuttle-status');
     if (btn) {
       btn.textContent = '✓ ' + source;
@@ -56,25 +55,11 @@
     }
   }
 
-  function showHint() {
-    if (!hintEl) {
-      hintEl = document.createElement('div');
-      hintEl.id = 'advance-hint';
-      document.body.appendChild(hintEl);
-    }
-    hintEl.textContent = '点击屏幕 或 按 AB Shuttle 3（蓝牙快捷键）→ 继续';
-    hintEl.classList.add('show');
-  }
-
-  function hideHint() {
-    if (hintEl) hintEl.classList.remove('show');
-  }
-
   function trigger(source) {
     if (!armed || !handler) return;
     var fn = handler;
     disarm();
-    flashInput(source);
+    flashShuttleStatus(source);
     try {
       fn(source);
     } catch (err) {
@@ -88,14 +73,12 @@
     handler = fn;
     armed = true;
     options = Object.assign(defaults(), opts || {});
-    showHint();
   }
 
   function disarm() {
     armed = false;
     handler = null;
     options = defaults();
-    hideHint();
   }
 
   function onPointerDown(e) {
@@ -125,7 +108,7 @@
     }
 
     if (!armed && label) {
-      flashInput((window.SYS_ERROR_SHUTTLE_DEVICE || 'AB Shuttle 3') + ' · ' + label);
+      flashShuttleStatus((window.SYS_ERROR_SHUTTLE_DEVICE || 'AB Shuttle 3') + ' · ' + label);
     }
   }
 
