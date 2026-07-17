@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SYS_ERROR — Step 3 → Step 4</title>
+  <link rel="stylesheet" href="/game-shuttle.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: Tahoma, "MS Sans Serif", Arial, sans-serif;
+    }
+    #stage { position: fixed; inset: 0; background: #000; }
+    #player {
+      width: 100vw; height: 100vh;
+      object-fit: contain; background: #000;
+    }
+    #white-flash {
+      position: fixed; inset: 0; background: #fff;
+      opacity: 0; pointer-events: none; z-index: 20;
+    }
+    #white-flash.on {
+      animation: flashIn 0.55s ease-out forwards;
+    }
+    @keyframes flashIn {
+      0% { opacity: 0; }
+      25% { opacity: 1; }
+      100% { opacity: 1; }
+    }
+    #loading {
+      position: fixed; inset: 0; z-index: 30;
+      display: none; align-items: center; justify-content: center;
+      background: #008080;
+    }
+    #loading.show { display: flex; }
+    .load-win {
+      width: min(420px, 92vw);
+      background: #c0c0c0;
+      border: 2px solid;
+      border-color: #fff #808080 #808080 #fff;
+      box-shadow: 4px 4px 0 rgba(0,0,0,0.45);
+    }
+    .load-title {
+      background: linear-gradient(90deg, #000080, #1084d0);
+      color: #fff; font-size: 12px; font-weight: 700;
+      padding: 4px 8px;
+    }
+    .load-body {
+      padding: 28px 24px 22px;
+      text-align: center;
+      color: #000;
+      font-size: 13px;
+    }
+    .load-body h2 {
+      font-size: 14px; font-weight: 700; margin-bottom: 8px;
+    }
+    .load-body p { color: #333; margin-bottom: 18px; font-size: 12px; }
+    .load-track {
+      height: 18px; background: #fff;
+      border: 2px inset #c0c0c0; padding: 2px;
+      display: flex; gap: 2px;
+    }
+    .load-block {
+      flex: 1; background: #ece9d8;
+      transition: background 0.12s;
+    }
+    .load-block.on {
+      background: linear-gradient(180deg, #32cd32 0%, #228b22 100%);
+    }
+    #skip-hint {
+      position: fixed; right: 16px; bottom: 14px;
+      color: rgba(255,255,255,0.4); font-size: 11px;
+      letter-spacing: 0.06em; z-index: 40; display: none;
+    }
+    #skip-hint.show { display: block; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <video id="player" playsinline preload="auto" src="./transition.mp4"></video>
+  </div>
+  <div id="white-flash" aria-hidden="true"></div>
+  <div id="loading" aria-live="polite">
+    <div class="load-win">
+      <div class="load-title">GESTO Biometric XP — Loading</div>
+      <div class="load-body">
+        <h2>Initializing Step 4…</h2>
+        <p>Loading gesture models and biometric sequence</p>
+        <div class="load-track" id="load-track"></div>
+      </div>
+    </div>
+  </div>
+  <div id="skip-hint">Press any key to skip</div>
+
+  <script src="/game-idle-reset.js"></script>
+  <script src="/game-advance-input.js"></script>
+  <script src="/game-shuttle.js"></script>
+  <script>
+    const NEXT = '/part4/sequence.html';
+    const player = document.getElementById('player');
+    const flash = document.getElementById('white-flash');
+    const loading = document.getElementById('loading');
+    const track = document.getElementById('load-track');
+    const skip = document.getElementById('skip-hint');
+    let phase = 'video';
+    let leaving = false;
+
+    window.SYS_ERROR_IDLE?.arm('bridge-skip');
+
+    function skipBridge() {
+      if (leaving) return;
+      if (phase === 'video') afterVideo();
+      else if (phase === 'loading' || phase === 'flash') goNext();
+    }
+
+    window.SYS_ERROR_ADVANCE?.arm(skipBridge, { anyKey: true });
+
+    for (let i = 0; i < 14; i++) {
+      const b = document.createElement('div');
+      b.className = 'load-block';
+      track.appendChild(b);
+    }
+    const blocks = track.querySelectorAll('.load-block');
+
+    function goNext() {
+      if (leaving) return;
+      leaving = true;
+      window.SYS_ERROR_IDLE?.disarm();
+      window.SYS_ERROR_ADVANCE?.disarm();
+      window.location.href = NEXT;
+    }
+
+    function runLoading() {
+      phase = 'loading';
+      loading.classList.add('show');
+      skip.classList.add('show');
+      let filled = 0;
+      const interval = setInterval(() => {
+        if (filled < blocks.length) {
+          blocks[filled].classList.add('on');
+          filled++;
+        } else {
+          clearInterval(interval);
+          setTimeout(goNext, 350);
+        }
+      }, 120);
+    }
+
+    function afterVideo() {
+      if (leaving || phase !== 'video') return;
+      phase = 'flash';
+      flash.classList.add('on');
+      setTimeout(runLoading, 480);
+    }
+
+    function startVideo() {
+      player.play().catch(() => {});
+    }
+
+    document.addEventListener('keydown', skipBridge);
+
+    player.addEventListener('ended', afterVideo);
+    player.addEventListener('error', afterVideo);
+
+    startVideo();
+  </script>
+</body>
+</html>

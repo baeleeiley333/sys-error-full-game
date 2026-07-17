@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Human Verify - Puzzle Arena</title>
+  <link rel="stylesheet" href="/game-shuttle.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ============ XP DESKTOP SHELL ============ -->
+  <div id="xp-desktop">
+    <div id="xp-desktop-icons">
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">🖥️</span><span>My Computer</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">🌐</span><span>The Internet</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">📁</span><span>Closed Folder</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">💾</span><span>Hard Drive</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">🗑️</span><span>Recycle Bin</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">📄</span><span>Internet Document</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">🖧</span><span>Network Neighborhood</span></div>
+      <div class="xp-icon" aria-hidden="true" tabindex="-1"><span class="xp-icon-glyph">⚙️</span><span>Control Panel</span></div>
+      <div class="xp-icon xp-icon-interactive" id="game-icon" role="button" tabindex="0" aria-label="Open Relationship Puzzle">
+        <img class="xp-icon-image" src="assets/gameicon.png" alt="" />
+      </div>
+    </div>
+
+    <!-- ============ SCREEN: WELCOME — dialog + Clippy popup ============
+         A single wizard dialog (cropped tight from the reference image,
+         no baked-in icons) floats on the real desktop, auto-shown on
+         load. Clicking it reveals a Clippy popup layered on top, at
+         the same spot Clippy sits in the original composite. Next/
+         Back/Cancel/Close are real hotspots on the dialog art itself. -->
+    <section class="screen screen-fullbleed screen-overlay" id="screen-welcome">
+      <div class="floating-dialog" id="welcome-dialog">
+        <img id="welcome-dialog-bg" src="assets/intro.jpg" alt="Welcome to Relationship-Triggered Visual System 95" />
+        <img class="clippy-popup" id="clippy-popup" src="assets/clippy-popup.png" alt="Clippy: all camera content stays in your browser, nothing is uploaded or stored" />
+        <button class="image-hotspot" id="btn-wizard-next" aria-label="Next"
+          style="left:62.5%;top:87.3%;width:16.4%;height:10.1%;"></button>
+        <button class="image-hotspot" id="btn-wizard-back" aria-label="Back"
+          style="left:43.8%;top:88.3%;width:16.1%;height:8.3%;"></button>
+        <button class="image-hotspot" id="btn-wizard-cancel" aria-label="Cancel"
+          style="left:81.4%;top:88.3%;width:16.4%;height:8.3%;"></button>
+        <button class="image-hotspot" id="btn-wizard-close" aria-label="Close"
+          style="left:94.0%;top:1.8%;width:4.1%;height:4.8%;"></button>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN: GAME START (gamestart.jpg, 1:1, animated) ============ -->
+    <section class="screen screen-fullbleed screen-overlay" id="screen-gamestart" hidden>
+      <div class="image-screen-full" style="--ar: 1 / 1;">
+        <img src="assets/gamestart.jpg" alt="Relationship Puzzle" />
+        <button class="image-hotspot start-glow" id="btn-gamestart-start" aria-label="Start"
+          style="left:35.5%;top:79.7%;width:28.3%;height:6.0%;"></button>
+        <button class="image-hotspot" id="btn-gamestart-exit" aria-label="Exit"
+          style="left:75.0%;top:80.5%;width:14.4%;height:4.4%;"></button>
+        <button class="image-hotspot" id="btn-gamestart-close" aria-label="Close"
+          style="left:90.0%;top:5.2%;width:2.2%;height:2.4%;"></button>
+      </div>
+    </section>
+
+    <div id="xp-window" hidden>
+      <!-- title bar -->
+      <div id="xp-titlebar">
+        <div id="xp-titlebar-left">
+          <span id="xp-title-icon">🔒</span>
+          <span id="xp-title-text">HumanVerify_Puzzle.exe — Attendance System</span>
+        </div>
+        <div id="xp-titlebar-buttons">
+          <button class="xp-btn" id="xp-min" title="Minimize">_</button>
+          <button class="xp-btn" id="xp-max" title="Maximize">▢</button>
+          <button class="xp-btn xp-btn-close" id="xp-close" title="Restart">✕</button>
+        </div>
+      </div>
+
+      <div id="xp-menubar">
+        <span>File</span><span>Verify</span><span>Players</span><span>Help</span>
+      </div>
+
+      <!-- ============ SCREEN: CAPTURE ============ -->
+      <section class="screen" id="screen-capture" hidden>
+        <div class="verification-stage">
+          <header>
+            <div class="sys-subtitle">VISUAL VERIFY</div>
+            <div class="sys-title">ATTENDANCE SYSTEM</div>
+            <div id="prompt-text">! SYSTEM READY. INITIALIZING CAMERA...</div>
+          </header>
+
+          <main id="capture-area">
+            <video id="video-feed" autoplay playsinline muted></video>
+            <div id="capture-hint">GET BOTH PLAYERS IN FRAME, FACING THE CAMERA</div>
+          </main>
+
+          <footer class="controls">
+            <div class="footer-icons">
+              <button class="icon-btn" id="btn-reset-all" title="Reset">↺</button>
+              <button class="icon-btn" id="btn-close" title="Close">☒</button>
+              <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+              <button class="icon-btn" id="camera-btn" title="Take photo">📷</button>
+              <button class="icon-btn" id="upload-btn" title="Upload a photo (if no camera)">📁</button>
+              <input type="file" id="upload-input" accept="image/*" hidden />
+            </div>
+            <button id="verify-btn">CAPTURE</button>
+          </footer>
+
+          <aside id="user-panel">
+            <div id="user-avatar-container">
+              <video id="avatar-video" autoplay playsinline muted></video>
+            </div>
+            <div id="id-tag">ID: OE 1984</div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN: SCANNING / FACE DETECT ============ -->
+      <section class="screen" id="screen-scan" hidden>
+        <div class="verification-stage">
+          <header>
+            <div class="sys-subtitle">VISUAL VERIFY</div>
+            <div class="sys-title">FACE RECOGNITION</div>
+            <div id="scan-status">! ANALYZING PLAYERS...</div>
+          </header>
+
+          <main id="scan-area">
+            <canvas id="scan-canvas"></canvas>
+            <div class="scan-line"></div>
+          </main>
+
+          <footer class="controls">
+            <div class="footer-icons">
+              <button class="icon-btn" id="btn-retake" title="Retake">↺ RETAKE</button>
+            </div>
+            <button id="scan-continue-btn" disabled>ANALYZING...</button>
+          </footer>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN: COUNTDOWN (overlay) ============ -->
+      <section class="screen" id="screen-countdown" hidden>
+        <div id="countdown-player-label"></div>
+        <div id="countdown-number">3</div>
+      </section>
+
+      <!-- ============ SCREEN: VS INTRO ============ -->
+      <section class="screen pixel-screen" id="screen-vs" hidden>
+        <div id="vs-sky" aria-hidden="true">
+          <div class="vs-cloud vs-cloud-1"></div>
+          <div class="vs-cloud vs-cloud-2"></div>
+          <div class="vs-cloud vs-cloud-3"></div>
+          <div class="vs-hills"></div>
+        </div>
+        <div id="vs-header">PLAYER 1 &amp; PLAYER 2</div>
+        <div id="vs-stage">
+          <div class="vs-side vs-side-1">
+            <div class="vs-frame">
+              <div class="vs-avatar" id="vs-avatar-1"></div>
+            </div>
+            <div class="vs-label p1-color">PLAYER 1</div>
+            <div class="vs-ready p1-color">READY</div>
+          </div>
+          <div class="vs-center">
+            <div id="vs-heart" aria-hidden="true">💗</div>
+            <div id="vs-text">VS</div>
+          </div>
+          <div class="vs-side vs-side-2">
+            <div class="vs-frame">
+              <div class="vs-avatar" id="vs-avatar-2"></div>
+            </div>
+            <div class="vs-label p2-color">PLAYER 2</div>
+            <div class="vs-ready p2-color">READY</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN: DUEL (turn-based, reused per player) ============ -->
+      <section class="screen pixel-screen" id="screen-duel" hidden>
+        <div id="duel-intro">
+          <div class="vs-cloud vs-cloud-1"></div>
+          <div class="vs-cloud vs-cloud-2"></div>
+          <div class="vs-cloud vs-cloud-3"></div>
+          <div class="hero-avatar" id="hero-avatar"></div>
+          <div id="duel-intro-text">PLAYER 1 GET READY!</div>
+        </div>
+
+        <div id="duel-play" hidden>
+          <!-- small "now playing" widget, pinned bottom-right of the whole desktop -->
+          <div id="wmp-widget">
+            <div class="wmp-content-overlay">
+              <div class="duel-hud-avatar" id="duel-hud-avatar"></div>
+              <div id="duel-hud-name">PLAYER 1</div>
+              <div class="wmp-status">Now Playing…</div>
+            </div>
+          </div>
+
+          <!-- the actual enlarged puzzle, its own floating window -->
+          <div id="puzzle-window">
+            <div class="puzzle-window-titlebar"></div>
+            <div class="puzzle-window-body">
+              <div id="duel-timers">
+                <div class="duel-timer-col">
+                  <span class="duel-timer-label">ELAPSED</span>
+                  <div id="duel-giant-timer">00:00.0</div>
+                </div>
+                <div class="duel-timer-col">
+                  <span class="duel-timer-label">TIME LEFT</span>
+                  <div id="duel-limit-countdown">35</div>
+                </div>
+              </div>
+              <div id="duel-camera-wrap">
+                <video id="gesture-video" autoplay playsinline muted></video>
+                <canvas id="gesture-overlay"></canvas>
+              </div>
+              <div id="duel-prompt">⚠ ONE HAND ONLY — ✊ FIST TO GRAB, ✋ OPEN TO DROP</div>
+              <div id="duel-puzzle-row">
+                <div class="puzzle-wrap" id="duel-puzzle-wrap">
+                  <div class="puzzle-board" id="duel-board"></div>
+                  <div class="hand-cursor" id="duel-cursor"></div>
+                  <div class="drag-ghost" id="duel-drag-ghost" aria-hidden="true"></div>
+                  <div class="win-flag" id="duel-winflag">SOLVED!</div>
+                  <div class="timeup-flag" id="duel-timeup-flag">TIME'S UP!</div>
+                </div>
+                <div id="gesture-guide" aria-hidden="true">
+                  <span class="gesture-guide-icon">✋ ONE HAND</span>
+                  <span class="gesture-guide-step"><b>ONE HAND ONLY</b> — hide the other hand</span>
+                  <span class="gesture-guide-step"><b>✊ FIST</b> over a tile = grab it</span>
+                  <span class="gesture-guide-step"><b>MOVE</b> hand = drag the tile</span>
+                  <span class="gesture-guide-step"><b>✋ OPEN HAND</b> = drop it there</span>
+                  <span class="gesture-guide-step gesture-guide-note">a single pointing finger only aims — it can't grab</span>
+                  <div id="reference-thumb-wrap">
+                    <span class="reference-thumb-label">✔ TARGET</span>
+                    <div id="reference-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <button class="manual-toggle" id="duel-manual-toggle">🖱 Manual Mode</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN: JUDGE (Windows system message + real K.O. fight-scene assets) ============ -->
+      <section class="screen pixel-screen" id="screen-judge" hidden>
+        <div id="judge-flash" aria-hidden="true"></div>
+        <div id="judge-confetti" aria-hidden="true"></div>
+        <div id="judge-stage">
+          <div id="judge-msgbox">
+            <div class="msgbox-titlebar">
+              <span class="msgbox-title-text">System Message</span>
+              <span class="msgbox-title-x">✕</span>
+            </div>
+            <div class="msgbox-body">
+              <svg class="msgbox-icon" viewBox="0 0 32 32" aria-hidden="true">
+                <circle cx="16" cy="16" r="15" fill="#fff" stroke="#1c5fd6" stroke-width="2"/>
+                <path d="M16 9 a4 4 0 1 1 -2.9 1.2" fill="none" stroke="#1c5fd6" stroke-width="2" stroke-linecap="round"/>
+                <circle cx="16" cy="23" r="1.6" fill="#1c5fd6"/>
+              </svg>
+              <span id="judge-bubble-text"></span>
+            </div>
+            <div class="msgbox-footer"><span class="msgbox-ok-btn" tabindex="-1">OK</span></div>
+          </div>
+          <div id="judge-avatars">
+            <div class="judge-avatar-slot">
+              <div class="judge-avatar" id="judge-avatar-1"></div>
+              <div class="judge-dizzy-face" id="judge-dizzy-1" aria-hidden="true">
+                <span class="dizzy-eye">@</span><span class="dizzy-eye">@</span>
+                <div class="dizzy-mouth"></div>
+              </div>
+              <div class="judge-name p1-color">PLAYER 1</div>
+              <div class="judge-time" id="judge-time-1">--:--.-</div>
+            </div>
+            <div class="judge-avatar-slot">
+              <div class="judge-avatar" id="judge-avatar-2"></div>
+              <div class="judge-dizzy-face" id="judge-dizzy-2" aria-hidden="true">
+                <span class="dizzy-eye">@</span><span class="dizzy-eye">@</span>
+                <div class="dizzy-mouth"></div>
+              </div>
+              <div class="judge-name p2-color">PLAYER 2</div>
+              <div class="judge-time" id="judge-time-2">--:--.-</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- real fight-game action video: punch, kick, K.O. splash -->
+        <video class="judge-ko-frame" id="judge-video-action" muted playsinline preload="auto" aria-hidden="true">
+          <source src="assets/win-action.webm" type="video/webm" />
+          <source src="assets/win-action.mp4" type="video/mp4" />
+        </video>
+
+        <!-- winner reveal: real character video + our own dynamic text/photos -->
+        <div id="judge-winpose" aria-hidden="true">
+          <div id="winpose-character">
+            <video id="judge-video-character" muted playsinline loop preload="auto">
+              <source src="assets/win-character.webm" type="video/webm" />
+              <source src="assets/win-character.mp4" type="video/mp4" />
+            </video>
+            <div id="winpose-winner-avatar"></div>
+          </div>
+          <div id="winpose-loser-avatar"></div>
+          <div id="winpose-text">
+            <span id="winpose-player-label">PLAYER 1</span>
+            <span id="winpose-win-label">WIN</span>
+          </div>
+          <div id="winpose-times">
+            <div class="winpose-time-col p1-color"><span>PLAYER 1</span><b id="winpose-time-1">--:--.-</b></div>
+            <div id="winpose-glass" aria-hidden="true">🍷</div>
+            <div class="winpose-time-col p2-color"><span>PLAYER 2</span><b id="winpose-time-2">--:--.-</b></div>
+          </div>
+        </div>
+
+        <div id="judge-epilogue" hidden>
+          <div id="epilogue-status" class="win-msgbox">
+            <div class="msgbox-titlebar">
+              <span class="msgbox-title-text">Relationship Status</span>
+              <span class="msgbox-title-x">✕</span>
+            </div>
+            <div class="msgbox-body">
+              <div id="epilogue-heart">💞</div>
+              <div class="epilogue-text-col">
+                <div id="epilogue-label">RELATIONSHIP STATUS</div>
+                <div id="epilogue-value">TEAMMATES</div>
+              </div>
+            </div>
+            <div class="msgbox-footer"><span class="msgbox-ok-btn" tabindex="-1">OK</span></div>
+          </div>
+          <div id="epilogue-crash" hidden>
+            <div id="crash-loading">
+              <div id="crash-loading-text">LOADING...</div>
+              <div id="crash-loading-bar"><div id="crash-loading-fill"></div></div>
+            </div>
+            <div id="crash-frozen" hidden>
+              <div id="crash-cursor" aria-hidden="true"></div>
+              <div id="crash-message">HumanVerify_Puzzle.exe HAS STOPPED RESPONDING</div>
+              <div id="crash-sub">press any key to close</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+    <!-- /xp-window -->
+
+    <!-- ============ TASKBAR ============ -->
+    <div id="xp-taskbar">
+      <div id="xp-start-btn"><span id="xp-start-flag">⊞</span> start</div>
+      <div id="xp-taskbar-task" hidden>🧩 Visual System 95</div>
+      <div id="xp-clock">00:00</div>
+    </div>
+    <button type="button" id="btn-campaign-continue" hidden>▶ PRESS TO ENTER STEP 4</button>
+  </div>
+
+  <canvas id="capture-canvas" hidden></canvas>
+
+  <script src="/game-idle-reset.js"></script>
+  <script src="/game-advance-input.js"></script>
+  <script src="/game-shuttle.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

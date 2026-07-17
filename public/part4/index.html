@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GESTO Biometric XP</title>
+<style>
+:root{ --teal:#008080; --silver:#c0c0c0; --dk:#808080; --lt:#fff; --navy:#000080; }
+*{ box-sizing:border-box; user-select:none; }
+body{ margin:0; height:100vh; overflow:hidden; font-family:Tahoma,"MS Sans Serif",system-ui,sans-serif; font-size:13px; background:#008080; }
+#desk{ height:calc(100vh - 28px); padding:12px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:4px 2px; }
+.icon{ width:76px; padding:6px 4px; text-align:center; cursor:pointer; border:1px solid transparent; }
+.icon:hover{ background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.25); }
+.icon:active{ opacity:.8; }
+.icon .img{ font-size:32px; line-height:1.1; filter:drop-shadow(1px 1px 0 rgba(0,0,0,.25)); }
+.icon .txt{ color:#fff; font-size:11px; margin-top:4px; text-shadow:1px 1px 1px #000; line-height:1.25; word-break:break-word; }
+#taskbar{ position:fixed; left:0; right:0; bottom:0; height:28px; background:var(--silver); border-top:2px solid var(--lt); display:flex; align-items:center; padding:2px 3px; gap:3px; z-index:50; }
+#start{ height:22px; padding:0 8px 0 22px; font-weight:700; font-size:11px; background:var(--silver); border:2px outset var(--silver); position:relative; cursor:pointer; }
+#start::before{ content:"⊞"; position:absolute; left:6px; top:1px; color:var(--navy); }
+#start:active{ border-style:inset; }
+#clock{ margin-left:auto; border:1px inset var(--silver); padding:2px 8px; font-size:11px; background:var(--silver); min-width:52px; text-align:center; }
+#startMenu{ position:fixed; left:2px; bottom:28px; width:180px; background:var(--silver); border:2px outset var(--silver); display:none; z-index:60; box-shadow:2px 2px 0 #000; }
+#startMenu.show{ display:block; }
+#startMenu .banner{ background:linear-gradient(90deg,var(--navy),#1084d0); color:#fff; padding:20px 8px 8px; font-weight:700; font-size:14px; }
+#startMenu .item{ padding:6px 10px; cursor:pointer; display:flex; gap:8px; align-items:center; }
+#startMenu .item:hover{ background:var(--navy); color:#fff; }
+#toast{ position:fixed; left:50%; top:16px; transform:translateX(-50%); background:var(--silver); border:2px outset var(--silver); padding:8px 14px; display:none; z-index:70; font-size:12px; }
+#toast.show{ display:block; }
+#about{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:80; padding:16px; }
+#about.show{ display:flex; }
+.win{ background:var(--silver); border:2px outset var(--silver); width:min(400px,92vw); box-shadow:2px 2px 0 #000; }
+.win .title{ background:linear-gradient(90deg,var(--navy),#1084d0); color:#fff; padding:3px 6px; font-weight:700; font-size:12px; display:flex; justify-content:space-between; }
+.win .title button{ background:var(--silver); border:2px outset var(--silver); width:16px; height:14px; font-size:10px; line-height:1; padding:0; cursor:pointer; color:#000; }
+.win .body{ padding:14px; font-size:12px; line-height:1.65; }
+.win .body a{ color:var(--navy); }
+</style>
+</head>
+<body>
+<div id="desk">
+  <div class="icon" data-href="trainer.html" data-key="myMemes"><div class="img">🗂️</div><div class="txt" id="lblMemes"></div></div>
+  <div class="icon" data-href="sequence.html" data-key="sequence"><div class="img">⚡</div><div class="txt" id="lblSeq"></div></div>
+  <div class="icon" data-href="play.html" data-key="camera"><div class="img">📷</div><div class="txt" id="lblCamera"></div></div>
+  <div class="icon" data-action="soon" data-key="minesweeper"><div class="img">💣</div><div class="txt" id="lblMine"></div></div>
+  <div class="icon" data-action="help"><div class="img">💡</div><div class="txt" id="lblHelp"></div></div>
+  <div class="icon" data-action="about"><div class="img">ℹ️</div><div class="txt" id="lblAbout"></div></div>
+</div>
+<div id="startMenu">
+  <div class="banner">GESTO 98</div>
+  <div class="item" data-href="trainer.html">🗂️ <span id="menuMemes"></span></div>
+  <div class="item" data-href="sequence.html">⚡ <span id="menuSeq"></span></div>
+  <div class="item" data-href="play.html">📷 <span id="menuCamera"></span></div>
+  <div class="item" data-action="help">💡 <span id="menuHelp"></span></div>
+  <div class="item" data-action="about">ℹ️ <span id="menuAbout"></span></div>
+</div>
+<div id="taskbar">
+  <button id="start">Start</button>
+  <div id="clock">00:00</div>
+</div>
+<div id="toast"></div>
+<div id="about">
+  <div class="win">
+    <div class="title"><span>GESTO Biometric XP</span><button id="aboutX">×</button></div>
+    <div class="body" id="aboutBody"></div>
+  </div>
+</div>
+<script type="module">
+import { t, getLang, setLang } from "./shared.js";
+import { LS_KEY } from "./engine.js";
+
+function applyLabels() {
+  document.getElementById("lblMemes").textContent = t("myMemes");
+  document.getElementById("lblSeq").textContent = t("sequence");
+  document.getElementById("lblCamera").textContent = t("camera");
+  document.getElementById("lblMine").textContent = t("minesweeper");
+  document.getElementById("lblHelp").textContent = t("help");
+  document.getElementById("lblAbout").textContent = t("about");
+  document.getElementById("menuMemes").textContent = t("myMemes");
+  document.getElementById("menuSeq").textContent = t("sequence");
+  document.getElementById("menuCamera").textContent = t("camera");
+  document.getElementById("menuHelp").textContent = t("help");
+  document.getElementById("menuAbout").textContent = t("about");
+  const zh = getLang() === "zh";
+  document.getElementById("aboutBody").innerHTML = zh
+    ? `<b>GESTO Biometric XP</b> — AAA Studio<br><br>
+       基于 <a href="https://gestomeme.com" target="_blank">gestomeme.com</a> 识别引擎(@hi.jessie)。<br><br>
+       <b>流程</b>:先在「我的表情包」训练手势 → 再运行「Biometric Sequence」。<br><br>
+       数据仅存本机浏览器,不上传服务器。`
+    : `<b>GESTO Biometric XP</b> — AAA Studio<br><br>
+       Built on the <a href="https://gestomeme.com" target="_blank">gestomeme.com</a> engine by @hi.jessie.<br><br>
+       <b>Flow</b>: train in "My memes" → run "Biometric Sequence".<br><br>
+       Data stays in your browser only.`;
+}
+
+applyLabels();
+
+let stats = { gestures: 0 };
+try {
+  const raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+  stats.gestures = Object.keys(raw).filter(k => k !== "neutral" && raw[k]?.samples?.length).length;
+} catch (e) {}
+
+if (stats.gestures > 0) {
+  showToast(t("gestureCount", stats.gestures) + " — " + t("play"));
+}
+
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2800);
+}
+
+function tick() {
+  const d = new Date();
+  document.getElementById("clock").textContent =
+    String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+tick(); setInterval(tick, 30000);
+
+const menu = document.getElementById("startMenu");
+document.getElementById("start").onclick = () => menu.classList.toggle("show");
+document.addEventListener("click", e => {
+  if (!e.target.closest("#start") && !e.target.closest("#startMenu")) menu.classList.remove("show");
+});
+
+function go(href) { location.href = href; }
+
+document.querySelectorAll("[data-href]").forEach(el => {
+  el.onclick = () => go(el.dataset.href);
+  el.ondblclick = () => go(el.dataset.href);
+});
+document.querySelectorAll("#startMenu [data-href]").forEach(el => {
+  el.onclick = () => { menu.classList.remove("show"); go(el.dataset.href); };
+});
+
+document.querySelector('[data-action="soon"]').onclick = () => showToast(t("comingSoon") + " — " + t("minesweeper"));
+document.querySelector('[data-action="help"]').onclick = () => go("trainer.html");
+document.querySelector('#startMenu [data-action="help"]').onclick = () => { menu.classList.remove("show"); go("trainer.html"); };
+
+const about = document.getElementById("about");
+document.querySelector('[data-action="about"]').onclick = () => about.classList.add("show");
+document.querySelector('#startMenu [data-action="about"]').onclick = () => { menu.classList.remove("show"); about.classList.add("show"); };
+document.getElementById("aboutX").onclick = () => about.classList.remove("show");
+about.onclick = e => { if (e.target === about) about.classList.remove("show"); };
+</script>
+</body>
+</html>

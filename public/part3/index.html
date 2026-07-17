@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Scan Game — Relationship Recognition</title>
+  <link rel="stylesheet" href="/game-shuttle.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Tahoma:wght@400;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="camera-bg">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="bg-overlay"></canvas>
+  </div>
+
+  <div id="desktop">
+    <div id="game-stage">
+    <!-- Group A -->
+    <div class="subject-group group-a">
+      <div class="group-label">SUBJECT A</div>
+      <div class="xp-window media-player" id="player1">
+        <div class="xp-titlebar">
+          <img class="xp-icon" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23ff6600' width='16' height='16' rx='2'/%3E%3Cpolygon fill='white' points='5,3 5,13 13,8'/%3E%3C/svg%3E" alt="">
+          <span>Subject A — Media Player</span>
+          <div class="xp-controls">
+            <button class="xp-btn">_</button><button class="xp-btn">□</button><button class="xp-btn xp-close">×</button>
+          </div>
+        </div>
+        <div class="xp-body">
+          <div class="scan-area black-area">
+            <canvas id="scan-canvas-1"></canvas>
+            <div class="scan-label" id="scan-label-1">SCANNING...</div>
+          </div>
+          <div class="xp-toolbar">
+            <span class="toolbar-btn">▶</span><span class="toolbar-btn">⏸</span><span class="toolbar-btn">⏹</span>
+            <div class="progress-bar"><div class="progress-fill" id="progress-1"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="xp-window ms-paint" id="paint1">
+        <div class="xp-titlebar paint-title">
+          <img class="xp-icon" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23e8d44d' width='16' height='16'/%3E%3Crect fill='%23c44' x='2' y='2' width='5' height='5'/%3E%3Crect fill='%2344c' x='9' y='2' width='5' height='5'/%3E%3Crect fill='%234c4' x='2' y='9' width='5' height='5'/%3E%3C/svg%3E" alt="">
+          <span>Subject A — Paint</span>
+          <div class="xp-controls">
+            <button class="xp-btn">_</button><button class="xp-btn">□</button><button class="xp-btn xp-close">×</button>
+          </div>
+        </div>
+        <div class="xp-body">
+          <div class="paint-toolbar">
+            <span>File</span><span>Edit</span><span>View</span><span>Image</span><span>Colors</span><span>Help</span>
+          </div>
+          <div class="style-area red-area">
+            <canvas id="style-canvas-1"></canvas>
+            <div class="style-label" id="style-label-1"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group B: Subject 2 — black scan + red style -->
+    <div class="subject-group group-b">
+      <div class="group-label">SUBJECT B</div>
+      <div class="xp-window media-player" id="player2">
+        <div class="xp-titlebar">
+          <img class="xp-icon" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23ff6600' width='16' height='16' rx='2'/%3E%3Cpolygon fill='white' points='5,3 5,13 13,8'/%3E%3C/svg%3E" alt="">
+          <span>Subject B — Media Player</span>
+          <div class="xp-controls">
+            <button class="xp-btn">_</button><button class="xp-btn">□</button><button class="xp-btn xp-close">×</button>
+          </div>
+        </div>
+        <div class="xp-body">
+          <div class="scan-area black-area">
+            <canvas id="scan-canvas-2"></canvas>
+            <div class="scan-label" id="scan-label-2">AWAITING FACE...</div>
+          </div>
+          <div class="xp-toolbar">
+            <span class="toolbar-btn">▶</span><span class="toolbar-btn">⏸</span><span class="toolbar-btn">⏹</span>
+            <div class="progress-bar"><div class="progress-fill" id="progress-2"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="xp-window ms-paint" id="paint2">
+        <div class="xp-titlebar paint-title">
+          <img class="xp-icon" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23e8d44d' width='16' height='16'/%3E%3Crect fill='%23c44' x='2' y='2' width='5' height='5'/%3E%3Crect fill='%2344c' x='9' y='2' width='5' height='5'/%3E%3Crect fill='%234c4' x='2' y='9' width='5' height='5'/%3E%3C/svg%3E" alt="">
+          <span>Subject B — Paint</span>
+          <div class="xp-controls">
+            <button class="xp-btn">_</button><button class="xp-btn">□</button><button class="xp-btn xp-close">×</button>
+          </div>
+        </div>
+        <div class="xp-body">
+          <div class="paint-toolbar">
+            <span>File</span><span>Edit</span><span>View</span><span>Image</span><span>Colors</span><span>Help</span>
+          </div>
+          <div class="style-area red-area">
+            <canvas id="style-canvas-2"></canvas>
+            <div class="style-label" id="style-label-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div><!-- /game-stage -->
+
+    <div id="scanned-stamp" class="hidden" aria-hidden="true">
+      <span class="scanned-text">SCANNED</span>
+    </div>
+
+    <!-- Solo face: repeating "Relationship Not Found" dialogs -->
+    <div id="not-found-layer" aria-live="polite"></div>
+
+    <div id="scan-countdown" class="hidden" aria-hidden="true">
+      <div class="countdown-ring"></div>
+      <span id="countdown-number" class="countdown-number">5</span>
+      <span class="countdown-label">DEEP SCAN COUNTDOWN</span>
+    </div>
+
+    <!-- Relationship Detected — Loading dialog -->
+    <div id="loading-dialog" class="hidden" aria-hidden="true">
+      <div class="load-window">
+        <div class="load-titlebar">
+          <span></span>
+          <button class="load-close" type="button">×</button>
+        </div>
+        <div class="load-body">
+          <div class="load-icon">
+            <svg viewBox="0 0 80 50" width="80" height="50">
+              <rect x="8" y="12" width="18" height="28" fill="#3399ff"/>
+              <rect x="12" y="18" width="4" height="4" fill="#fff"/>
+              <rect x="18" y="18" width="4" height="4" fill="#fff"/>
+              <rect x="14" y="28" width="8" height="2" fill="#fff"/>
+              <rect x="48" y="12" width="18" height="28" fill="#222"/>
+              <rect x="52" y="18" width="4" height="4" fill="#fff"/>
+              <rect x="58" y="18" width="4" height="4" fill="#fff"/>
+              <rect x="54" y="28" width="8" height="2" fill="#fff"/>
+              <path d="M32 8 L40 2 L48 8" fill="none" stroke="#ff3333" stroke-width="2"/>
+              <circle cx="40" cy="6" r="3" fill="#ff3333"/>
+            </svg>
+          </div>
+          <p class="load-heading">Relationship Detected</p>
+          <p class="load-sub" id="load-status-text">Loading...</p>
+          <div class="load-progress-track">
+            <div class="load-progress-blocks" id="load-progress-blocks"></div>
+          </div>
+          <div class="load-buttons">
+            <button class="load-btn load-btn-done" disabled>Done</button>
+            <button class="load-btn load-btn-cancel" type="button" id="load-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="relationship-panel" class="hidden">
+      <div class="rel-header">▌ RELATIONSHIP RECOGNITION SYSTEM v2.4</div>
+      <div class="rel-body">
+        <span class="rel-prefix">Relationship Recognition:</span>
+        <span class="rel-label">Relationship is:</span>
+        <span id="relationship-word" class="rel-word"></span>
+      </div>
+      <div class="rel-scanline"></div>
+    </div>
+
+    <div id="relationship-fullscreen" class="hidden" aria-hidden="true">
+      <div class="rel-fullscreen-inner">
+        <p class="rel-fullscreen-label">Relationship Recognition</p>
+        <p class="rel-fullscreen-sub">Relationship is:</p>
+        <p id="relationship-fullscreen-word" class="rel-fullscreen-word"></p>
+      </div>
+      <div class="rel-fullscreen-scanline"></div>
+    </div>
+
+    <!-- Final end screen — dog + vulnerability -->
+    <div id="end-screen" class="hidden" aria-hidden="true">
+      <div class="end-dialog-wrap">
+        <div class="vuln-window">
+          <div class="vuln-titlebar">
+            <span>Vulnerability detected</span>
+            <div class="vuln-controls">
+              <button class="vuln-btn">_</button>
+              <button class="vuln-btn">□</button>
+              <button class="vuln-btn">×</button>
+            </div>
+          </div>
+          <div class="vuln-body">
+            <p>Warning! You are about to connect deeply.</p>
+            <p>Are you ready to be seen?</p>
+            <div class="vuln-buttons">
+              <button class="vuln-action" id="end-cancel-btn">Cancel</button>
+              <button class="vuln-action vuln-ok" id="end-ok-btn">OK</button>
+            </div>
+          </div>
+          <div class="speech-tail"></div>
+        </div>
+        <p id="end-press-hint" class="end-press-hint">Press to OK</p>
+        <div class="rover-dog" aria-hidden="true">
+          <svg viewBox="0 0 120 140" width="120" height="140">
+            <ellipse cx="60" cy="118" rx="42" ry="14" fill="rgba(0,0,0,0.3)"/>
+            <ellipse cx="60" cy="88" rx="38" ry="42" fill="#f5d442"/>
+            <ellipse cx="60" cy="95" rx="28" ry="30" fill="#ffe566"/>
+            <ellipse cx="38" cy="52" rx="16" ry="28" fill="#e8b830" transform="rotate(-15 38 52)"/>
+            <ellipse cx="82" cy="52" rx="16" ry="28" fill="#e8b830" transform="rotate(15 82 52)"/>
+            <ellipse cx="60" cy="48" rx="32" ry="30" fill="#f5d442"/>
+            <circle cx="48" cy="44" r="7" fill="#fff"/>
+            <circle cx="72" cy="44" r="7" fill="#fff"/>
+            <circle cx="48" cy="44" r="3.5" fill="#222"/>
+            <circle cx="72" cy="44" r="3.5" fill="#222"/>
+            <ellipse cx="60" cy="56" rx="10" ry="7" fill="#fff"/>
+            <ellipse cx="60" cy="54" rx="6" ry="4" fill="#333"/>
+            <path d="M52 64 Q60 70 68 64" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+            <rect x="44" y="72" width="32" height="10" rx="3" fill="#cc2222"/>
+            <circle cx="60" cy="77" r="5" fill="#fff" stroke="#aaa" stroke-width="1"/>
+            <ellipse cx="28" cy="100" rx="10" ry="18" fill="#e8b830" transform="rotate(20 28 100)"/>
+            <ellipse cx="92" cy="100" rx="10" ry="18" fill="#e8b830" transform="rotate(-20 92 100)"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div id="status-bar">
+      <span id="status-text">Initializing camera...</span>
+      <span id="face-count">Faces: 0</span>
+      <span id="scan-phase">Phase: IDLE</span>
+    </div>
+  </div>
+
+  <!-- Windows XP Boot Desktop -->
+  <div id="xp-boot">
+    <div class="xp-bliss-wallpaper"></div>
+    <div class="xp-desktop-icons">
+      <button type="button" class="xp-desktop-icon" id="game-icon" title="Press to start">
+        <img src="assets/desktop-icon.png" alt="" class="xp-icon-img">
+        <span class="xp-icon-ready">Are you ready to start?</span>
+        <span class="xp-icon-press">Press to start</span>
+      </button>
+    </div>
+    <div class="xp-boot-taskbar">
+      <button type="button" class="xp-start-btn"><span>start</span></button>
+      <span class="xp-taskbar-clock">10:30 AM</span>
+    </div>
+  </div>
+
+  <!-- Internet Explorer — opens like visiting a site -->
+  <div id="ie-shell" class="hidden" aria-hidden="true">
+    <div class="ie-window">
+      <div class="ie-titlebar">
+        <img class="ie-globe" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23008000'/%3E%3Ctext x='8' y='11' text-anchor='middle' fill='white' font-size='9' font-family='Arial'%3EE%3C/text%3E%3C/svg%3E" alt="">
+        <span>Relationship Recognition Game — Internet Explorer</span>
+        <div class="ie-win-btns">
+          <button type="button">_</button><button type="button">□</button><button type="button">×</button>
+        </div>
+      </div>
+      <div class="ie-menubar"><span>File</span><span>Edit</span><span>View</span><span>Favorites</span><span>Tools</span><span>Help</span></div>
+      <div class="ie-addressbar">
+        <span class="ie-addr-label">Address</span>
+        <div class="ie-addr-input">http://localhost/relationship-recognition-game/index.html</div>
+        <button type="button" class="ie-go">Go</button>
+      </div>
+
+      <div id="start-overlay" class="title-screen-inner title-reference">
+        <div class="title-reference-frame">
+          <img src="assets/gamestart.png" alt="relationship RECOGNITION GAME" class="title-reference-img">
+        </div>
+        <p id="title-press-start" class="title-press-overlay blink">PRESS ANY KEY TO START</p>
+        <p id="start-error" class="start-error hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Intro in Windows Media Player window -->
+  <div id="intro-overlay" class="hidden" aria-hidden="true">
+    <div class="intro-xp-bg"></div>
+    <div class="xp-window media-player intro-wmp-window">
+      <div class="xp-titlebar">
+        <img class="xp-icon" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23ff6600' width='16' height='16' rx='2'/%3E%3Cpolygon fill='white' points='5,3 5,13 13,8'/%3E%3C/svg%3E" alt="">
+        <span>Windows Media Player — intro.mp4</span>
+        <div class="xp-controls">
+          <button class="xp-btn">_</button><button class="xp-btn">□</button><button class="xp-btn xp-close">×</button>
+        </div>
+      </div>
+      <div class="xp-body">
+        <div class="intro-video-area">
+          <video id="intro-video" playsinline preload="auto" src="assets/intro.mp4"></video>
+          <div class="intro-ready-banner">
+            <p class="intro-ready-main">GAME STARTING SOON</p>
+            <p class="intro-ready-sub">Are you ready?</p>
+            <div class="intro-press-cue" aria-hidden="true">
+              <div class="retro-taskbar-iso">
+                <div class="retro-taskbar-slab">
+                  <div class="retro-start-btn">
+                    <span class="retro-win-logo" aria-hidden="true">
+                      <span></span><span></span><span></span><span></span>
+                    </span>
+                    <span class="retro-start-text">Start</span>
+                  </div>
+                  <div class="retro-tray-icons">
+                    <span class="retro-tray-icon ie"></span>
+                    <span class="retro-tray-icon doc"></span>
+                    <span class="retro-tray-icon folder"></span>
+                  </div>
+                </div>
+              </div>
+              <p class="intro-press-label">PRESS START</p>
+            </div>
+          </div>
+        </div>
+        <div class="xp-toolbar">
+          <span class="toolbar-btn">▶</span><span class="toolbar-btn">⏸</span><span class="toolbar-btn">⏹</span>
+          <div class="progress-bar intro-progress"><div class="progress-fill" id="intro-progress-fill"></div></div>
+        </div>
+      </div>
+    </div>
+    <div id="syserror-popup" class="syserror-popup hidden" aria-hidden="true">
+      <img src="assets/syserror-hint.png" alt="Rover — I'm looking for a relationship">
+    </div>
+    <p class="intro-skip blink">PRESS ANY KEY TO SKIP</p>
+  </div>
+
+  <!-- Phase transition flash -->
+  <div id="phase-transition" class="hidden" aria-hidden="true">
+    <span id="phase-transition-text"></span>
+  </div>
+
+  <script src="/game-idle-reset.js"></script>
+  <script src="/game-advance-input.js"></script>
+  <script src="/game-shuttle.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

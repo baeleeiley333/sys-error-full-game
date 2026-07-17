@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gesture Trainer — Play</title>
+<style>
+:root{ --bg:#0e1018; --card:#1a1d28; --line:#2a2f42; --fg:#eef0f6; --mut:#8b92a8; --accent:#ff5c85; }
+*{ box-sizing:border-box; }
+body{ margin:0; min-height:100vh; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--bg); color:var(--fg); display:flex; flex-direction:column; }
+.top{ display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--line); }
+.top a{ color:var(--accent); text-decoration:none; font-size:13px; font-weight:500; }
+.top .links{ display:flex; gap:14px; }
+.badge{ font-size:12px; color:var(--mut); }
+.stage{ flex:1; display:grid; place-items:center; padding:20px; position:relative; }
+#meme{ width:min(92vw,520px); aspect-ratio:1; background:var(--card); border:1px solid var(--line); border-radius:20px; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.35); }
+#meme img{ max-width:100%; max-height:100%; object-fit:contain; }
+#meme .emoji{ font-size:min(28vw,140px); line-height:1; }
+#meme .hint{ color:var(--mut); font-size:15px; padding:24px; text-align:center; line-height:1.6; }
+#meme.pop{ animation:pop .42s cubic-bezier(.2,1.2,.4,1); box-shadow:0 0 48px rgba(180,140,255,.35), 0 20px 60px rgba(0,0,0,.35); }
+#meme.glow::after{ content:""; position:absolute; inset:-20%; background:radial-gradient(circle, rgba(200,160,255,.25) 0%, transparent 70%); pointer-events:none; animation:shimmer .6s ease-out; }
+@keyframes shimmer{ from{ opacity:1; transform:scale(.8); } to{ opacity:0; transform:scale(1.2); } }
+#meme{ position:relative; }
+#soundBtn{ position:fixed; left:16px; bottom:16px; width:40px; height:40px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; font-size:18px; z-index:20; box-shadow:0 4px 16px rgba(0,0,0,.3); }
+#soundBtn.off{ opacity:.45; }
+@keyframes pop{ 0%{ transform:scale(.72); opacity:.5; } 55%{ transform:scale(1.06); } 100%{ transform:scale(1); opacity:1; } }
+#name{ margin-top:14px; text-align:center; font-size:18px; font-weight:600; min-height:26px; color:#7fffd4; }
+.pip{ position:fixed; right:16px; bottom:16px; width:min(34vw,200px); border-radius:12px; overflow:hidden; border:2px solid var(--line); background:#111; box-shadow:0 8px 28px rgba(0,0,0,.4); }
+.pip canvas{ width:100%; display:block; }
+.pip #pipLabel{ position:absolute; left:8px; top:8px; background:rgba(0,0,0,.55); color:#ccc; font-size:11px; padding:2px 8px; border-radius:5px; font-weight:600; }
+.pip{ position:fixed; }
+.pipwrap{ position:relative; }
+.bottom{ padding:12px 16px 20px; border-top:1px solid var(--line); }
+.bottom h3{ margin:0 0 8px; font-size:12px; color:var(--mut); font-weight:600; }
+#recent{ display:flex; gap:8px; overflow-x:auto; min-height:54px; }
+.chip{ flex:0 0 auto; width:48px; height:48px; border-radius:10px; background:var(--card); border:1px solid var(--line); display:grid; place-items:center; overflow:hidden; font-size:22px; opacity:.55; transition:opacity .2s, transform .2s; }
+.chip.on{ opacity:1; transform:scale(1.08); border-color:var(--accent); }
+.chip img{ width:100%; height:100%; object-fit:cover; }
+#status{ text-align:center; color:var(--accent); font-size:12px; margin-top:8px; min-height:16px; }
+.empty{ text-align:center; padding:40px 20px; }
+.empty a{ display:inline-block; margin-top:16px; padding:10px 18px; background:var(--accent); color:#fff; border-radius:10px; text-decoration:none; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="links">
+    <a href="sequence.html" id="lnkSeq"></a>
+    <a href="desktop.html" id="lnkDesktop"></a>
+    <a href="trainer.html" id="lnkTrainer"></a>
+  </div>
+  <span class="badge" id="stats"></span>
+</div>
+<div class="stage" id="stage">
+  <div>
+    <div id="meme"><div class="hint" id="hint"></div></div>
+    <div id="name"></div>
+  </div>
+</div>
+<div class="pipwrap pip" id="pipBox" hidden>
+  <canvas id="cam" width="480" height="360"></canvas>
+  <div id="pipLabel"></div>
+</div>
+<div class="bottom" id="bottom" hidden>
+  <h3 id="recentTitle"></h3>
+  <div id="recent"></div>
+  <div id="status"></div>
+</div>
+<button id="soundBtn" title="sound" hidden>🔊</button>
+<script type="module">
+import { createEngine, LS_KEY } from "./engine.js";
+import { t, renderMeme, thumbHTML, getLang } from "./shared.js";
+import { playMagicReveal, unlockMagicAudio, isMuted, setMuted } from "./magic-sounds.js";
+
+const meme = document.getElementById("meme");
+const nameEl = document.getElementById("name");
+const recentEl = document.getElementById("recent");
+const history = [];
+let lastLabel = null;
+let prevLabel = null;
+
+const soundBtn = document.getElementById("soundBtn");
+function syncSoundBtn() {
+  soundBtn.textContent = isMuted() ? "🔇" : "🔊";
+  soundBtn.classList.toggle("off", isMuted());
+}
+soundBtn.onclick = () => { unlockMagicAudio(); setMuted(!isMuted()); syncSoundBtn(); };
+document.body.addEventListener("click", () => unlockMagicAudio(), { once: true });
+
+document.getElementById("lnkSeq").textContent = "⚡ " + (getLang() === "zh" ? "生物序列" : "SEQUENCE");
+document.getElementById("lnkDesktop").textContent = t("backDesktop");
+document.getElementById("lnkTrainer").textContent = t("backTrainer");
+document.getElementById("recentTitle").textContent = t("recent");
+
+function hasStoredGestures() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+    return Object.keys(raw).some(k => k !== "neutral" && raw[k]?.samples?.length);
+  } catch { return false; }
+}
+
+function pushHistory(g) {
+  if (!g) return;
+  history.unshift(g);
+  if (history.length > 12) history.pop();
+  recentEl.innerHTML = history.map(h =>
+    `<div class="chip${h.label === lastLabel ? " on" : ""}">${thumbHTML(h.img)}</div>`
+  ).join("");
+}
+
+function showEmpty() {
+  document.getElementById("stage").innerHTML = `
+    <div class="empty">
+      <p>${t("playEmpty")}</p>
+      <a href="trainer.html">${t("goTrain")}</a>
+    </div>`;
+  document.getElementById("pipBox").hidden = true;
+  document.getElementById("bottom").hidden = true;
+}
+
+if (!hasStoredGestures()) {
+  showEmpty();
+} else {
+  document.getElementById("pipBox").hidden = false;
+  document.getElementById("bottom").hidden = false;
+  soundBtn.hidden = false;
+  syncSoundBtn();
+  document.getElementById("hint").textContent = t("playHint");
+
+  const engine = await createEngine(document.getElementById("cam"), {
+    showSkeleton: false,
+    strings: { loadingModel: t("loading"), ready: t("ready") },
+    onStatus: txt => { document.getElementById("status").textContent = txt; },
+    onGesture: g => {
+      const next = g?.label || null;
+      if (g && next !== prevLabel) {
+        playMagicReveal(g.label || g.name);
+        meme.classList.add("glow");
+        setTimeout(() => meme.classList.remove("glow"), 650);
+      }
+      prevLabel = next;
+      lastLabel = next;
+      if (g) {
+        renderMeme(meme, g);
+        nameEl.textContent = g.name;
+        pushHistory(g);
+        document.getElementById("pipLabel").textContent = g.name;
+        document.getElementById("pipLabel").style.color = "#7fffd4";
+      } else {
+        meme.innerHTML = `<div class="hint">${t("playHint")}</div>`;
+        meme.classList.remove("pop");
+        nameEl.textContent = t("neutral");
+        document.getElementById("pipLabel").textContent = t("neutral");
+        document.getElementById("pipLabel").style.color = "#ccc";
+      }
+    },
+  });
+
+  const s = engine.stats();
+  document.getElementById("stats").textContent =
+    `${t("gestureCount", s.gestures)} · ${t("samplesCount", s.totalSamples)}`;
+}
+</script>
+</body>
+</html>

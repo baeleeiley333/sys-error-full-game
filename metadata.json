@@ -1,0 +1,6 @@
+{
+  "name": "SYS_ERROR Boot Sequence",
+  "description": "An interactive, cinematic Windows XP boot sequence and installation interface by A.A.A STUDIO.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

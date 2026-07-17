@@ -1,0 +1,1457 @@
+/* =========================================================
+   Human Verify - Puzzle Arena
+   WindowsXP-shell "attendance system" captcha that leads into a
+   pixel-arcade 1v1 duel: GAME START -> VS intro -> Player 1's turn
+   (avatar jump/glow/enlarge, 3-2-1 countdown, huge timer, gesture-
+   controlled 3x3 photo restore) -> Player 2's turn -> Roger the dog
+   judges the winner.
+
+   Nothing here ever leaves the browser: the captured photo lives
+   only in memory / data URLs, and all face + hand recognition runs
+   on-device via MediaPipe Tasks (WASM), never uploaded anywhere.
+   ========================================================= */
+
+(function () {
+  'use strict';
+
+  const CONFIG = {
+    GRID: 3,
+    GESTURE_HOLD_FRAMES: 4,
+    VIDEO_W: 640,
+    VIDEO_H: 480,
+    MEDIAPIPE_VERSION: '0.10.14',
+    DUEL_LIMIT_MS: 35000,
+  };
+
+  const CDN_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${CONFIG.MEDIAPIPE_VERSION}`;
+  const WASM_BASE = `${CDN_BASE}/wasm`;
+  const FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+  const HAND_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+  const BRIDGE_URL = '/bridge/index.html';
+  const AAA_STUDIO_AVATAR = '/aaa-avatar.png';
+  let campaignComplete = false;
+
+  const $ = (id) => document.getElementById(id);
+
+  function goToNextChapter() {
+    window.SYS_ERROR_IDLE?.disarm();
+    window.location.href = BRIDGE_URL;
+  }
+
+  // ---------------------------------------------------------
+  // Screen management
+  // ---------------------------------------------------------
+  const screens = {
+    welcome: $('screen-welcome'),
+    gamestart: $('screen-gamestart'),
+    capture: $('screen-capture'),
+    scan: $('screen-scan'),
+    countdown: $('screen-countdown'),
+    vs: $('screen-vs'),
+    duel: $('screen-duel'),
+    judge: $('screen-judge'),
+  };
+
+  function showScreen(name) {
+    Object.entries(screens).forEach(([key, el]) => { el.hidden = key !== name; });
+    const idle = window.SYS_ERROR_IDLE;
+    const advance = window.SYS_ERROR_ADVANCE;
+    if (!idle && !advance) return;
+    if (name === 'welcome') {
+      idle?.arm('part2-welcome');
+      advance?.arm(() => {
+        $('clippy-popup').classList.add('visible');
+        playVsSting();
+        showScreen('gamestart');
+      });
+    } else if (name === 'gamestart') {
+      idle?.arm('part2-gamestart');
+      advance?.arm(() => $('btn-gamestart-start').click());
+    } else {
+      idle?.disarm();
+      advance?.disarm();
+    }
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+  function restartAnimation(el) {
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+  }
+
+  // ---------------------------------------------------------
+  // Audio (synthesized, no asset files)
+  // ---------------------------------------------------------
+  let audioCtx = null;
+  function ac() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+  function beep(freq = 880, dur = 0.12, type = 'square', vol = 0.15) {
+    try {
+      const ctx = ac();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.value = vol;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      osc.stop(ctx.currentTime + dur + 0.02);
+    } catch (e) { /* audio not available, ignore */ }
+  }
+  const playSwapBeep = () => beep(520, 0.06, 'square', 0.08);
+  const playCountBeep = () => beep(440, 0.15, 'square', 0.12);
+  const playGoBeep = () => beep(880, 0.35, 'square', 0.16);
+  const playWinFanfare = () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'square', 0.12), i * 110));
+  const playGameStartFanfare = () => [392, 523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.13), i * 90));
+  const playVsSting = () => [220, 174].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'sawtooth', 0.1), i * 130));
+  const playVsFanfare = () => {
+    // a bouncy major-key arpeggio, Mario-"level select"-ish
+    const notes = [
+      [523, 0.11], [659, 0.11], [784, 0.11], [1046, 0.2],
+      [880, 0.11], [1046, 0.32],
+    ];
+    let t = 0;
+    notes.forEach(([freq, dur]) => {
+      setTimeout(() => beep(freq, dur, 'square', 0.13), t * 1000);
+      t += dur * 0.82;
+    });
+  };
+  const playKoImpact = () => {
+    beep(90, 0.14, 'square', 0.22);
+    setTimeout(() => beep(55, 0.2, 'sawtooth', 0.18), 60);
+  };
+
+  function speak(text, opts = {}) {
+    try {
+      if (!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      u.rate = opts.rate || 1.0;
+      u.pitch = opts.pitch || 1.0;
+      u.volume = opts.volume ?? 1.0;
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* speech synthesis not available, ignore */ }
+  }
+
+  // ---------------------------------------------------------
+  // Camera
+  // ---------------------------------------------------------
+  let mediaStream = null;
+  async function ensureCamera() {
+    if (mediaStream) return mediaStream;
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: CONFIG.VIDEO_W, height: CONFIG.VIDEO_H, facingMode: 'user' },
+      audio: false,
+    });
+    return mediaStream;
+  }
+  function stopCamera() {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((t) => t.stop());
+      mediaStream = null;
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Welcome intro (auto-launches on load, no click needed to open):
+  // a single wizard dialog, cropped tight from the reference image so
+  // it never duplicates the real desktop icons sitting behind it.
+  // Clicking the dialog reveals a Clippy popup layered on top of it
+  // (same dialog stays put); Next leads to the (full-bleed, animated)
+  // gamestart screen; Start there opens the actual app window and
+  // begins the capture flow.
+  // ---------------------------------------------------------
+  function resetWelcomeStage() {
+    $('clippy-popup').classList.remove('visible');
+    restartAnimation($('welcome-dialog'));
+  }
+
+  function showWelcomeIntro() {
+    resetWelcomeStage();
+    showScreen('welcome');
+  }
+
+  function closeGameWindow() {
+    resetAll();
+  }
+
+  $('game-icon').addEventListener('dblclick', showWelcomeIntro);
+  $('game-icon').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showWelcomeIntro(); }
+  });
+
+  $('welcome-dialog-bg').addEventListener('click', () => {
+    $('clippy-popup').classList.add('visible');
+    playVsSting();
+  });
+
+  $('btn-wizard-next').addEventListener('click', () => showScreen('gamestart'));
+  $('btn-wizard-back').addEventListener('click', showWelcomeIntro);
+  $('btn-wizard-cancel').addEventListener('click', showWelcomeIntro);
+  $('btn-wizard-close').addEventListener('click', showWelcomeIntro);
+
+  $('btn-gamestart-start').addEventListener('click', () => {
+    playGameStartFanfare();
+    $('xp-window').hidden = false;
+    $('xp-taskbar-task').hidden = false;
+    enterCaptureScreen();
+  });
+  $('btn-gamestart-exit').addEventListener('click', closeGameWindow);
+  $('btn-gamestart-close').addEventListener('click', closeGameWindow);
+
+  // ---------------------------------------------------------
+  // Capture screen — auto-captures when both players hold up a
+  // peace sign (✌️) together; the manual 📷 button always works too.
+  // ---------------------------------------------------------
+  const captureCanvas = $('capture-canvas');
+  let groupPhotoDataUrl = null;
+  let lastHandAnchors = null; // {x,y} (mirrored, 0..1) of the 2 peace-sign hands at capture time, or null
+
+  async function enterCaptureScreen() {
+    showScreen('capture');
+    const promptEl = $('prompt-text');
+    $('upload-btn').classList.remove('pulse-highlight');
+    try {
+      await ensureCamera();
+      $('video-feed').srcObject = mediaStream;
+      $('avatar-video').srcObject = mediaStream;
+      promptEl.textContent = '! CAMERA CONNECTED. BOTH PLAYERS SHOW A ✌️ PEACE SIGN TO AUTO-CAPTURE (or click 📷).';
+      startCaptureGestureWatch();
+    } catch (err) {
+      promptEl.textContent = '! CAMERA UNAVAILABLE — click 📁 below to upload a group photo instead';
+      $('capture-area').innerHTML = '<div id="no-camera-hint">📁<br />No camera access<br /><span>Click the 📁 button in the toolbar below to upload a group photo</span></div>';
+      $('upload-btn').classList.add('pulse-highlight');
+    }
+  }
+
+  function doCapturePhoto(anchors) {
+    const video = $('video-feed');
+    if (!video.srcObject || !video.videoWidth) return;
+    stopCaptureGestureWatch();
+    captureCanvas.width = video.videoWidth;
+    captureCanvas.height = video.videoHeight;
+    const ctx = captureCanvas.getContext('2d');
+    ctx.translate(captureCanvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    groupPhotoDataUrl = captureCanvas.toDataURL('image/jpeg', 0.92);
+    lastHandAnchors = anchors || null;
+    goToScan();
+  }
+
+  $('camera-btn').addEventListener('click', () => doCapturePhoto(null));
+
+  $('upload-btn').addEventListener('click', () => $('upload-input').click());
+  $('upload-input').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    stopCaptureGestureWatch();
+    const reader = new FileReader();
+    reader.onload = () => { groupPhotoDataUrl = reader.result; lastHandAnchors = null; goToScan(); };
+    reader.readAsDataURL(file);
+  });
+
+  $('verify-btn').addEventListener('click', () => $('camera-btn').click());
+
+  // ---------------------------------------------------------
+  // Shared MediaPipe HandLandmarker (capture screen needs 2 hands for ✌️)
+  // Duel puzzle uses a separate single-hand landmarker.
+  // ---------------------------------------------------------
+  let handLandmarkerPromise = null;
+  let duelHandLandmarkerPromise = null;
+
+  async function createHandLandmarker(numHands) {
+    const { FilesetResolver, HandLandmarker } = await import(`${CDN_BASE}/vision_bundle.mjs`);
+    const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+    return HandLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: HAND_MODEL_URL },
+      runningMode: 'VIDEO',
+      numHands,
+    });
+  }
+
+  async function getHandLandmarker() {
+    if (!handLandmarkerPromise) {
+      handLandmarkerPromise = createHandLandmarker(2);
+    }
+    return handLandmarkerPromise;
+  }
+
+  async function getDuelHandLandmarker() {
+    if (!duelHandLandmarkerPromise) {
+      duelHandLandmarkerPromise = createHandLandmarker(1);
+    }
+    return duelHandLandmarkerPromise;
+  }
+
+  function fingerExtended(lm, tipIdx, pipIdx) {
+    const tip = lm[tipIdx], pip = lm[pipIdx], wrist = lm[0];
+    const dTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+    const dPip = Math.hypot(pip.x - wrist.x, pip.y - wrist.y);
+    return dTip > dPip * 1.15;
+  }
+  function isPeaceSign(lm) {
+    return fingerExtended(lm, 8, 6) && fingerExtended(lm, 12, 10) &&
+      !fingerExtended(lm, 16, 14) && !fingerExtended(lm, 20, 18);
+  }
+  function isFist(lm) {
+    return !fingerExtended(lm, 8, 6) && !fingerExtended(lm, 12, 10) &&
+      !fingerExtended(lm, 16, 14) && !fingerExtended(lm, 20, 18);
+  }
+  function isOpenPalm(lm) {
+    return fingerExtended(lm, 8, 6) && fingerExtended(lm, 12, 10) &&
+      fingerExtended(lm, 16, 14) && fingerExtended(lm, 20, 18);
+  }
+
+  const PEACE_HOLD_MS = 700;
+  let captureLoopActive = false;
+  let peaceHoldStart = 0;
+  let captureHandLandmarker = null;
+
+  async function startCaptureGestureWatch() {
+    if (!mediaStream) return;
+    try {
+      captureHandLandmarker = await getHandLandmarker();
+    } catch (e) {
+      console.warn('Peace-sign auto-capture unavailable, use the 📷 button manually.', e);
+      return;
+    }
+    captureLoopActive = true;
+    peaceHoldStart = 0;
+    requestAnimationFrame(captureGestureLoop);
+  }
+
+  function stopCaptureGestureWatch() {
+    captureLoopActive = false;
+  }
+
+  function captureGestureLoop() {
+    if (!captureLoopActive) return;
+    const video = $('video-feed');
+    const promptEl = $('prompt-text');
+    if (captureHandLandmarker && video.readyState >= 2) {
+      const result = captureHandLandmarker.detectForVideo(video, performance.now());
+      const lms = result.landmarks || [];
+      const peaceHands = lms.filter(isPeaceSign);
+
+      if (peaceHands.length >= 2) {
+        if (!peaceHoldStart) peaceHoldStart = performance.now();
+        const remaining = Math.max(0, PEACE_HOLD_MS - (performance.now() - peaceHoldStart));
+        promptEl.textContent = `✌️✌️ PEACE SIGNS DETECTED — HOLD STILL... CAPTURING IN ${(remaining / 1000).toFixed(1)}s`;
+        if (remaining <= 0) {
+          const anchors = peaceHands.slice(0, 2).map((lm) => ({ x: clamp01(1 - lm[8].x), y: clamp01(lm[8].y) }));
+          doCapturePhoto(anchors);
+          return;
+        }
+      } else {
+        peaceHoldStart = 0;
+        promptEl.textContent = lms.length > 0
+          ? `✌️ ${peaceHands.length}/2 PEACE SIGNS — BOTH PLAYERS SHOW ✌️ TO AUTO-CAPTURE`
+          : '! CAMERA CONNECTED. BOTH PLAYERS SHOW A ✌️ PEACE SIGN TO AUTO-CAPTURE (or click 📷).';
+      }
+    }
+    requestAnimationFrame(captureGestureLoop);
+  }
+
+  // ---------------------------------------------------------
+  // Scan / face-detection screen
+  // ---------------------------------------------------------
+  let faceDetectorPromise = null;
+  async function getFaceDetector() {
+    if (!faceDetectorPromise) {
+      faceDetectorPromise = (async () => {
+        const { FilesetResolver, FaceDetector } = await import(`${CDN_BASE}/vision_bundle.mjs`);
+        const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+        return FaceDetector.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: FACE_MODEL_URL },
+          runningMode: 'IMAGE',
+        });
+      })();
+    }
+    return faceDetectorPromise;
+  }
+
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  function cropSquareDataUrl(img, cx, cy, size) {
+    size = Math.max(24, Math.min(size, Math.min(img.naturalWidth, img.naturalHeight)));
+    let sx = cx - size / 2;
+    let sy = cy - size / 2;
+    sx = Math.max(0, Math.min(sx, img.naturalWidth - size));
+    sy = Math.max(0, Math.min(sy, img.naturalHeight - size));
+    const c = document.createElement('canvas');
+    c.width = 220; c.height = 220;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, sx, sy, size, size, 0, 0, 220, 220);
+    return c.toDataURL('image/jpeg', 0.9);
+  }
+
+  let players = { 1: { avatar: null, box: null }, 2: { avatar: null, box: null } };
+
+  function anchorToBox(anchor, w, h, size) {
+    const cx = anchor.x * w;
+    const cy = Math.max(size / 2, anchor.y * h - h * 0.12); // bias up from the raised hand toward the face
+    return { originX: cx - size / 2, originY: cy - size / 2, width: size, height: size };
+  }
+
+  async function goToScan() {
+    showScreen('scan');
+    const statusEl = $('scan-status');
+    const continueBtn = $('scan-continue-btn');
+    continueBtn.disabled = true;
+    continueBtn.textContent = 'ANALYZING...';
+    statusEl.textContent = '! ANALYZING PLAYERS...';
+
+    const canvas = $('scan-canvas');
+    const img = await loadImage(groupPhotoDataUrl);
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    let boxes = [];
+    try {
+      const detector = await getFaceDetector();
+      const result = detector.detect(img);
+      boxes = (result.detections || [])
+        .map((d) => d.boundingBox)
+        .sort((a, b) => b.width * b.height - a.width * a.height)
+        .slice(0, 4)
+        .sort((a, b) => a.originX - b.originX);
+    } catch (e) {
+      console.warn('Face detection unavailable.', e);
+    }
+
+    let p1Box, p2Box, drawBoxes = false;
+    const w = img.naturalWidth, h = img.naturalHeight;
+
+    if (boxes.length >= 2) {
+      p1Box = boxes[0];
+      p2Box = boxes[boxes.length - 1];
+      drawBoxes = true;
+      statusEl.textContent = '✔ 2 PLAYERS DETECTED VIA FACE RECOGNITION.';
+    } else if (lastHandAnchors && lastHandAnchors.length >= 2) {
+      const sorted = [...lastHandAnchors].sort((a, b) => a.x - b.x);
+      const size = Math.min(w, h) * 0.42;
+      p1Box = anchorToBox(sorted[0], w, h, size);
+      p2Box = anchorToBox(sorted[1], w, h, size);
+      statusEl.textContent = '! FACE MODEL UNAVAILABLE — CROPPED FROM YOUR PEACE-SIGN HAND POSITIONS INSTEAD.';
+    } else {
+      const size = Math.min(w, h) * 0.4;
+      p1Box = { originX: w * 0.28 - size / 2, originY: h * 0.12, width: size, height: size };
+      p2Box = { originX: w * 0.72 - size / 2, originY: h * 0.12, width: size, height: size };
+      statusEl.textContent = '! COULD NOT DETECT PLAYERS — USING DEFAULT CROPS.';
+    }
+
+    players[1].box = p1Box;
+    players[2].box = p2Box;
+    players[1].avatar = cropSquareDataUrl(img, p1Box.originX + p1Box.width / 2, p1Box.originY + p1Box.height / 2, Math.max(p1Box.width, p1Box.height) * 1.7);
+    players[2].avatar = cropSquareDataUrl(img, p2Box.originX + p2Box.width / 2, p2Box.originY + p2Box.height / 2, Math.max(p2Box.width, p2Box.height) * 1.7);
+
+    if (drawBoxes) drawScanBoxes(ctx, [p1Box, p2Box]);
+
+    // player avatars are ready -- move on by itself, no confirm click needed
+    statusEl.textContent += '  STARTING GAME…';
+    continueBtn.disabled = false;
+    continueBtn.textContent = 'START NOW →';
+    clearTimeout(scanAutoAdvanceTimer);
+    scanAutoAdvanceTimer = setTimeout(proceedFromScan, 1500);
+  }
+
+  function drawScanBoxes(ctx, boxes) {
+    const labels = ['P1', 'P2'];
+    boxes.forEach((b, i) => {
+      ctx.strokeStyle = i === 0 ? '#35c3ff' : '#ff5fd1';
+      ctx.lineWidth = Math.max(3, ctx.canvas.width * 0.006);
+      ctx.strokeRect(b.originX, b.originY, b.width, b.height);
+      ctx.fillStyle = ctx.strokeStyle;
+      const fontSize = Math.max(16, ctx.canvas.width * 0.03);
+      ctx.font = `bold ${fontSize}px monospace`;
+      ctx.fillText(labels[i], b.originX + 4, Math.max(fontSize, b.originY - 6));
+    });
+  }
+
+  let scanAutoAdvanceTimer = null;
+  function proceedFromScan() {
+    clearTimeout(scanAutoAdvanceTimer);
+    scanAutoAdvanceTimer = null;
+    startPixelSequence();
+  }
+
+  $('btn-retake').addEventListener('click', () => {
+    clearTimeout(scanAutoAdvanceTimer);
+    scanAutoAdvanceTimer = null;
+    enterCaptureScreen();
+  });
+  $('scan-continue-btn').addEventListener('click', proceedFromScan);
+
+  // ---------------------------------------------------------
+  // Puzzle board
+  // ---------------------------------------------------------
+  let activeBoard = null;
+
+  function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  }
+  function isSorted(arr) {
+    for (let i = 0; i < arr.length - 1; i++) if (arr[i] > arr[i + 1]) return false;
+    return true;
+  }
+
+  class PuzzleBoard {
+    constructor(el, playerId, imageDataUrl) {
+      this.el = el;
+      this.playerId = playerId;
+      this.n = CONFIG.GRID;
+      this.cells = [];
+      this.pieces = [];
+      this.selected = null;
+      this.solved = false;
+      this.el.classList.add('manual-off');
+      this.buildFromImage(imageDataUrl);
+    }
+
+    buildFromImage(url) {
+      this.el.innerHTML = '';
+      this.pieces = [];
+      const n = this.n;
+      let order = [...Array(n * n).keys()];
+      do { shuffleArray(order); } while (isSorted(order));
+      this.cells = order.slice();
+
+      for (let pos = 0; pos < n * n; pos++) {
+        const piece = document.createElement('div');
+        piece.className = 'puzzle-piece';
+        piece.style.backgroundImage = `url(${url})`;
+        piece.style.backgroundSize = `${n * 100}% ${n * 100}%`;
+        piece.dataset.pos = String(pos);
+        piece.setAttribute('draggable', 'true');
+        const span = document.createElement('span');
+        piece.appendChild(span);
+        this.el.appendChild(piece);
+        this.pieces.push(piece);
+        this.attachManualHandlers(piece, pos);
+      }
+      this.renderAll();
+    }
+
+    attachManualHandlers(piece, pos) {
+      piece.addEventListener('click', () => this.select(pos));
+
+      piece.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', String(pos));
+        piece.classList.add('dragging');
+      });
+      piece.addEventListener('dragend', () => {
+        piece.classList.remove('dragging');
+        this.pieces.forEach((p) => p.classList.remove('drag-over'));
+      });
+      piece.addEventListener('dragover', (e) => e.preventDefault());
+      piece.addEventListener('dragenter', () => piece.classList.add('drag-over'));
+      piece.addEventListener('dragleave', () => piece.classList.remove('drag-over'));
+      piece.addEventListener('drop', (e) => {
+        e.preventDefault();
+        piece.classList.remove('drag-over');
+        const from = Number(e.dataTransfer.getData('text/plain'));
+        this.swap(from, pos);
+      });
+    }
+
+    renderAll() { for (let pos = 0; pos < this.cells.length; pos++) this.renderPos(pos); }
+
+    renderPos(pos) {
+      const idx = this.cells[pos];
+      const n = this.n;
+      const col = idx % n, row = Math.floor(idx / n);
+      const x = n === 1 ? 0 : (col / (n - 1)) * 100;
+      const y = n === 1 ? 0 : (row / (n - 1)) * 100;
+      const piece = this.pieces[pos];
+      piece.style.backgroundPosition = `${x}% ${y}%`;
+      piece.querySelector('span').textContent = String(idx + 1);
+    }
+
+    swap(posA, posB) {
+      if (this.solved || posA === posB || Number.isNaN(posA) || Number.isNaN(posB)) return;
+      const tmp = this.cells[posA];
+      this.cells[posA] = this.cells[posB];
+      this.cells[posB] = tmp;
+      this.renderPos(posA);
+      this.renderPos(posB);
+      playSwapBeep();
+      this.checkSolved();
+    }
+
+    select(pos) {
+      if (this.solved) return;
+      if (this.selected === null) {
+        this.selected = pos;
+        this.pieces[pos].classList.add('selected');
+      } else if (this.selected === pos) {
+        this.pieces[pos].classList.remove('selected');
+        this.selected = null;
+      } else {
+        this.pieces[this.selected].classList.remove('selected');
+        const prev = this.selected;
+        this.selected = null;
+        this.swap(prev, pos);
+      }
+    }
+
+    pickUp(pos) {
+      if (this.solved) return;
+      this.pieces[pos].classList.add('picked-up');
+    }
+
+    cancelPickup(pos) {
+      if (pos == null) return;
+      this.pieces[pos].classList.remove('picked-up');
+    }
+
+    dropAt(fromPos, toPos) {
+      this.pieces[fromPos].classList.remove('picked-up');
+      this.swap(fromPos, toPos);
+    }
+
+    checkSolved() {
+      const win = this.cells.every((v, i) => v === i);
+      if (win) {
+        this.solved = true;
+        this.pieces.forEach((p) => {
+          p.classList.add('solved');
+          p.setAttribute('draggable', 'false');
+        });
+        onPlayerSolved(this.playerId);
+      }
+    }
+  }
+
+  $('duel-manual-toggle').addEventListener('click', () => {
+    if (!activeBoard) return;
+    const on = activeBoard.el.classList.toggle('manual-off') === false;
+    const btn = $('duel-manual-toggle');
+    btn.classList.toggle('active', on);
+    btn.textContent = on ? '🖱 Manual Mode: ON' : '🖱 Manual Mode';
+  });
+
+  function enableManualMode() {
+    if (!activeBoard) return;
+    activeBoard.el.classList.remove('manual-off');
+    const btn = $('duel-manual-toggle');
+    btn.classList.add('active');
+    btn.textContent = '🖱 Manual Mode: ON';
+  }
+
+  // ---------------------------------------------------------
+  // Timers
+  // ---------------------------------------------------------
+  const timers = {
+    1: { start: 0, raf: null, elapsed: 0, finished: false, solved: false, timedOut: false },
+    2: { start: 0, raf: null, elapsed: 0, finished: false, solved: false, timedOut: false },
+  };
+
+  let duelLimitTimer = null;
+  let duelLimitRaf = null;
+
+  function resetDuelTimers() {
+    clearDuelLimitTimer();
+    [1, 2].forEach((id) => {
+      timers[id] = { start: 0, raf: null, elapsed: 0, finished: false, solved: false, timedOut: false };
+    });
+  }
+
+  function formatLimitSeconds(ms) {
+    const sec = Math.max(0, Math.ceil(ms / 1000));
+    return String(sec);
+  }
+
+  function formatJudgeTime(playerId) {
+    const t = timers[playerId];
+    if (t.solved) return formatTime(t.elapsed);
+    if (t.timedOut) return 'TIME OUT';
+    return 'FAILED';
+  }
+
+  function clearDuelLimitTimer() {
+    if (duelLimitTimer) {
+      clearTimeout(duelLimitTimer);
+      duelLimitTimer = null;
+    }
+    if (duelLimitRaf) {
+      cancelAnimationFrame(duelLimitRaf);
+      duelLimitRaf = null;
+    }
+  }
+
+  function updateLimitCountdown(remainingMs) {
+    const el = $('duel-limit-countdown');
+    if (!el) return;
+    el.textContent = formatLimitSeconds(remainingMs);
+    el.classList.toggle('urgent', remainingMs <= 10000);
+  }
+
+  function startDuelLimitTimer(playerId) {
+    clearDuelLimitTimer();
+    const deadline = performance.now() + CONFIG.DUEL_LIMIT_MS;
+    updateLimitCountdown(CONFIG.DUEL_LIMIT_MS);
+
+    const tickLimit = () => {
+      const remaining = deadline - performance.now();
+      updateLimitCountdown(remaining);
+      if (remaining > 0) duelLimitRaf = requestAnimationFrame(tickLimit);
+    };
+    duelLimitRaf = requestAnimationFrame(tickLimit);
+
+    duelLimitTimer = setTimeout(() => onPlayerTimeout(playerId), CONFIG.DUEL_LIMIT_MS);
+  }
+
+  function finishPlayerTurn() {
+    clearDuelLimitTimer();
+    stopGestureTracking();
+    if (duelResolve) {
+      const resolve = duelResolve;
+      duelResolve = null;
+      resolve();
+    }
+  }
+
+  function formatTime(ms) {
+    const totalSec = ms / 1000;
+    const m = Math.floor(totalSec / 60);
+    const sec = (totalSec % 60).toFixed(1).padStart(4, '0');
+    return `${String(m).padStart(2, '0')}:${sec}`;
+  }
+
+  function startDuelTimer(playerId) {
+    const t = timers[playerId];
+    t.start = performance.now();
+    t.finished = false;
+    t.elapsed = 0;
+    tickDuel(playerId);
+  }
+
+  function tickDuel(playerId) {
+    const t = timers[playerId];
+    if (t.finished) return;
+    t.elapsed = performance.now() - t.start;
+    $('duel-giant-timer').textContent = formatTime(t.elapsed);
+    t.raf = requestAnimationFrame(() => tickDuel(playerId));
+  }
+
+  let duelResolve = null;
+
+  function onPlayerSolved(playerId) {
+    const t = timers[playerId];
+    if (t.finished) return;
+    t.finished = true;
+    t.solved = true;
+    t.timedOut = false;
+    if (t.raf) cancelAnimationFrame(t.raf);
+    clearDuelLimitTimer();
+    $('duel-giant-timer').textContent = formatTime(t.elapsed);
+    $('duel-winflag').classList.add('show');
+    playWinFanfare();
+    stopGestureTracking();
+    setTimeout(finishPlayerTurn, 1300);
+  }
+
+  function onPlayerTimeout(playerId) {
+    const t = timers[playerId];
+    if (t.finished) return;
+    t.finished = true;
+    t.solved = false;
+    t.timedOut = true;
+    t.elapsed = CONFIG.DUEL_LIMIT_MS;
+    if (t.raf) cancelAnimationFrame(t.raf);
+    clearDuelLimitTimer();
+    updateLimitCountdown(0);
+    $('duel-giant-timer').textContent = formatTime(t.elapsed);
+    if (activeBoard) activeBoard.solved = true;
+    $('duel-timeup-flag').classList.add('show');
+    beep(180, 0.28, 'sawtooth', 0.18);
+    setTimeout(() => beep(120, 0.35, 'sawtooth', 0.16), 120);
+    stopGestureTracking();
+    setTimeout(finishPlayerTurn, 1100);
+  }
+
+  // ---------------------------------------------------------
+  // Pixel arcade sequence: VS -> P1 turn -> P2 turn -> JUDGE
+  // ---------------------------------------------------------
+  async function startPixelSequence() {
+    resetDuelTimers();
+    await showVsScreen();
+    await runPlayerTurn(1);
+    await runPlayerTurn(2);
+    await showJudge();
+  }
+
+  async function showVsScreen() {
+    showScreen('vs');
+    $('vs-avatar-1').style.backgroundImage = `url(${players[1].avatar})`;
+    $('vs-avatar-2').style.backgroundImage = `url(${players[2].avatar})`;
+    document.querySelectorAll('.vs-cloud').forEach(restartAnimation);
+    restartAnimation(document.querySelector('.vs-side-1'));
+    restartAnimation(document.querySelector('.vs-side-2'));
+    restartAnimation(document.querySelector('.vs-side-1 .vs-ready'));
+    restartAnimation(document.querySelector('.vs-side-2 .vs-ready'));
+    restartAnimation($('vs-heart'));
+    restartAnimation($('vs-text'));
+    playVsFanfare();
+    await sleep(2800);
+  }
+
+  async function runPlayerTurn(playerId) {
+    await showTurnIntro(playerId);
+    buildDuelBoard(playerId);
+    $('duel-intro').hidden = true;
+    await runDuelCountdown(playerId);
+    $('duel-play').hidden = false;
+    showScreen('duel');
+    await new Promise((resolve) => {
+      duelResolve = resolve;
+      startDuelTimer(playerId);
+      startDuelLimitTimer(playerId);
+      startGestureTracking();
+    });
+  }
+
+  async function showTurnIntro(playerId) {
+    showScreen('duel');
+    $('duel-play').hidden = true;
+    $('duel-intro').hidden = false;
+    const hero = $('hero-avatar');
+    hero.className = 'hero-avatar p' + playerId;
+    hero.style.backgroundImage = `url(${players[playerId].avatar})`;
+    restartAnimation(hero);
+    $('duel-intro-text').textContent = `PLAYER ${playerId} GET READY!`;
+    restartAnimation($('duel-intro-text'));
+    playCountBeep();
+    await sleep(1700);
+  }
+
+  function buildDuelBoard(playerId) {
+    $('duel-hud-avatar').style.backgroundImage = `url(${players[playerId].avatar})`;
+    $('duel-hud-name').textContent = 'PLAYER ' + playerId;
+    $('duel-hud-name').className = playerId === 1 ? 'p1-color' : 'p2-color';
+    $('duel-giant-timer').textContent = '00:00.0';
+    updateLimitCountdown(CONFIG.DUEL_LIMIT_MS);
+    $('duel-limit-countdown').classList.remove('urgent');
+    $('duel-winflag').classList.remove('show');
+    $('duel-timeup-flag').classList.remove('show');
+    $('duel-manual-toggle').classList.remove('active');
+    $('duel-manual-toggle').textContent = '🖱 Manual Mode';
+    $('reference-thumb').style.backgroundImage = `url(${groupPhotoDataUrl})`;
+    activeBoard = new PuzzleBoard($('duel-board'), playerId, groupPhotoDataUrl);
+  }
+
+  async function runDuelCountdown(playerId) {
+    showScreen('countdown');
+    $('countdown-player-label').textContent = 'PLAYER ' + playerId;
+    const el = $('countdown-number');
+    const seq = ['3', '2', '1', 'GO!'];
+    for (const label of seq) {
+      el.textContent = label;
+      restartAnimation(el);
+      el.style.animation = 'pop 0.5s ease-out';
+      if (label === 'GO!') playGoBeep(); else playCountBeep();
+      await sleep(700);
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Judge screen: a Windows system message announces the winner
+  // ---------------------------------------------------------
+  function setBubble(text) {
+    $('judge-bubble-text').textContent = text;
+  }
+
+  function spawnConfetti(count = 46) {
+    const container = $('judge-confetti');
+    container.innerHTML = '';
+    const colors = ['#ffd23f', '#ff6b6b', '#4ecdc4', '#95e1d3', '#f38181', '#aa96da'];
+    for (let i = 0; i < count; i++) {
+      const piece = document.createElement('div');
+      piece.className = 'confetti-piece';
+      piece.style.left = Math.random() * 100 + '%';
+      piece.style.background = colors[i % colors.length];
+      piece.style.animationDelay = (Math.random() * 0.4) + 's';
+      piece.style.animationDuration = (1.6 + Math.random() * 1.2) + 's';
+      piece.style.setProperty('--drift', (Math.random() * 80 - 40) + 'px');
+      container.appendChild(piece);
+    }
+  }
+
+  function shakeStage() {
+    const stage = $('judge-stage');
+    stage.classList.remove('shake');
+    void stage.offsetWidth;
+    stage.classList.add('shake');
+  }
+
+  function flashScreen() {
+    const flash = $('judge-flash');
+    flash.classList.remove('flash');
+    void flash.offsetWidth;
+    flash.classList.add('flash');
+  }
+
+  function resetJudgeVisualState() {
+    $('judge-stage').style.opacity = '1';
+    $('judge-msgbox').classList.remove('show', 'hide');
+    $('judge-msgbox').style.animation = ''; // release the msgbox*/forwards lock for the next round
+    [1, 2].forEach((p) => {
+      $('judge-avatar-' + p).classList.remove('power-up', 'power-down');
+      $('judge-avatar-' + p).style.animation = '';
+      $('judge-dizzy-' + p).classList.remove('show');
+    });
+    $('judge-confetti').innerHTML = '';
+
+    const actionVideo = $('judge-video-action');
+    actionVideo.classList.remove('show', 'hide');
+    actionVideo.style.animation = ''; // release the koFrame*/forwards lock for the next round
+    actionVideo.pause();
+    actionVideo.currentTime = 0;
+    const charVideo = $('judge-video-character');
+    charVideo.pause();
+    charVideo.currentTime = 0;
+    $('judge-winpose').classList.remove('show');
+    $('winpose-winner-avatar').style.animation = '';
+    $('winpose-winner-avatar').textContent = '';
+    $('winpose-winner-avatar').classList.remove('studio-win-badge');
+    $('winpose-loser-avatar').classList.remove('fly', 'studio-loser');
+    $('winpose-loser-avatar').style.animation = '';
+    $('winpose-text').style.animation = '';
+    $('winpose-times').style.animation = '';
+
+    $('judge-epilogue').hidden = true;
+    $('epilogue-status').hidden = false;
+    $('epilogue-status').classList.remove('show', 'fade-out');
+    $('epilogue-status').style.animation = '';
+    $('epilogue-crash').hidden = true;
+    $('crash-loading').hidden = false;
+    $('crash-frozen').hidden = true;
+    $('xp-window').classList.remove('app-frozen');
+    $('xp-title-text').textContent = 'HumanVerify_Puzzle.exe — Attendance System';
+    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  }
+
+  async function showEpilogue() {
+    const epilogue = $('judge-epilogue');
+    epilogue.hidden = false;
+    $('epilogue-status').classList.add('show');
+    speak('Relationship status: teammates!');
+    await sleep(2200);
+
+    $('epilogue-status').classList.add('fade-out');
+    await sleep(500);
+    $('epilogue-status').hidden = true;
+
+    // fake a crash: a brief "loading", then the app hangs and only the
+    // real window close (X) button gets you back to the desktop
+    $('epilogue-crash').hidden = false;
+    await sleep(1300);
+
+    $('crash-loading').hidden = true;
+    $('crash-frozen').hidden = false;
+    $('xp-window').classList.add('app-frozen');
+    $('xp-title-text').textContent = 'HumanVerify_Puzzle.exe — Attendance System (Not Responding)';
+    campaignComplete = true;
+    goToNextChapter();
+  }
+
+  function resolveDuelOutcome() {
+    const p1 = timers[1];
+    const p2 = timers[2];
+    if (!p1.solved && !p2.solved) return { type: 'studio' };
+    if (p1.solved && !p2.solved) return { type: 'player', winner: 1, loser: 2 };
+    if (!p1.solved && p2.solved) return { type: 'player', winner: 2, loser: 1 };
+    const t1 = p1.elapsed;
+    const t2 = p2.elapsed;
+    const winner = t1 === t2 ? (Math.random() < 0.5 ? 1 : 2) : (t1 < t2 ? 1 : 2);
+    return { type: 'player', winner, loser: winner === 1 ? 2 : 1 };
+  }
+
+  async function showAAAStudioWin() {
+    showScreen('judge');
+    resetJudgeVisualState();
+    $('judge-avatar-1').style.backgroundImage = `url(${players[1].avatar})`;
+    $('judge-avatar-2').style.backgroundImage = `url(${players[2].avatar})`;
+    $('judge-time-1').textContent = formatJudgeTime(1);
+    $('judge-time-2').textContent = formatJudgeTime(2);
+
+    setBubble('NEITHER PLAYER RESTORED THE PUZZLE IN 35 SECONDS...');
+    $('judge-msgbox').classList.add('show');
+    await sleep(1800);
+    setBubble('AAA STUDIO WINS!');
+    await sleep(2000);
+    $('judge-msgbox').classList.add('hide');
+    await sleep(300);
+
+    $('judge-avatar-1').classList.add('power-down');
+    $('judge-avatar-2').classList.add('power-down');
+    $('judge-dizzy-1').classList.add('show');
+    $('judge-dizzy-2').classList.add('show');
+    await sleep(900);
+
+    $('judge-stage').style.opacity = '0';
+    flashScreen();
+    shakeStage();
+    playKoImpact();
+
+    $('winpose-winner-avatar').style.backgroundImage = `url(${AAA_STUDIO_AVATAR})`;
+    $('winpose-winner-avatar').textContent = '';
+    $('winpose-winner-avatar').classList.add('studio-win-badge');
+    $('winpose-loser-avatar').style.backgroundImage = `url(${players[1].avatar})`;
+    $('winpose-loser-avatar').classList.add('studio-loser');
+    $('winpose-player-label').textContent = 'AAA STUDIO';
+    $('winpose-win-label').textContent = 'WIN';
+    $('winpose-time-1').textContent = formatJudgeTime(1);
+    $('winpose-time-2').textContent = formatJudgeTime(2);
+
+    const charVideo = $('judge-video-character');
+    charVideo.currentTime = 0;
+    charVideo.play().catch(() => {});
+    $('judge-winpose').classList.add('show');
+    spawnConfetti();
+    playWinFanfare();
+    speak('A A A Studio wins!');
+    await sleep(2200);
+
+    $('winpose-loser-avatar').classList.add('fly');
+    await sleep(1400);
+    await showEpilogue();
+  }
+
+  async function showJudge() {
+    const outcome = resolveDuelOutcome();
+    if (outcome.type === 'studio') {
+      await showAAAStudioWin();
+      return;
+    }
+
+    const { winner, loser } = outcome;
+    showScreen('judge');
+    resetJudgeVisualState();
+    $('judge-avatar-1').style.backgroundImage = `url(${players[1].avatar})`;
+    $('judge-avatar-2').style.backgroundImage = `url(${players[2].avatar})`;
+    $('judge-time-1').textContent = formatJudgeTime(1);
+    $('judge-time-2').textContent = formatJudgeTime(2);
+
+    setBubble("YOU BOTH DID GREAT...");
+    $('judge-msgbox').classList.add('show');
+    await sleep(1400);
+    setBubble('...BUT THERE CAN ONLY BE ONE WINNER!');
+    await sleep(1600);
+    $('judge-msgbox').classList.add('hide');
+    await sleep(300);
+
+    // the winner balloons up and glows, the loser shrinks to grayscale and
+    // sees stars, right on the same avatars shown a moment ago
+    $('judge-avatar-' + winner).classList.add('power-up');
+    $('judge-avatar-' + loser).classList.add('power-down');
+    $('judge-dizzy-' + loser).classList.add('show');
+    await sleep(900);
+
+    $('judge-stage').style.opacity = '0'; // the K.O. frames below fade to transparent, don't let this bleed through
+
+    // FRAME: real fight-sequence video -- the winner punches, kicks the
+    // loser flying, and the screen erupts into the K.O. splash
+    flashScreen();
+    shakeStage();
+    playKoImpact();
+    const actionVideo = $('judge-video-action');
+    actionVideo.currentTime = 0;
+    actionVideo.play().catch(() => { /* autoplay blocked, the frame still shows via poster/first-frame */ });
+    actionVideo.classList.add('show');
+    await sleep(5625); // exact duration of win-action.mp4
+
+    // FRAME 3: winner reveal on the real "raises fist" character video, with
+    // our own dynamic PLAYER X WIN text + real avatar photos composited on
+    // top (the reference video's own baked "PLAYER 1 WIN" text is cropped
+    // out of frame -- this clip only shows the character + the black ball)
+    actionVideo.classList.add('hide');
+    $('winpose-winner-avatar').style.backgroundImage = `url(${players[winner].avatar})`;
+    $('winpose-winner-avatar').textContent = '';
+    $('winpose-winner-avatar').classList.remove('studio-win-badge');
+    $('winpose-loser-avatar').style.backgroundImage = `url(${players[loser].avatar})`;
+    $('winpose-loser-avatar').classList.remove('studio-loser');
+    $('winpose-player-label').textContent = `PLAYER ${winner}`;
+    $('winpose-win-label').textContent = 'WIN';
+    $('winpose-time-1').textContent = formatJudgeTime(1);
+    $('winpose-time-2').textContent = formatJudgeTime(2);
+    const charVideo = $('judge-video-character');
+    charVideo.currentTime = 0;
+    charVideo.play().catch(() => { /* autoplay blocked, the frame still shows via poster/first-frame */ });
+    $('judge-winpose').classList.add('show');
+    spawnConfetti();
+    playWinFanfare();
+    speak(`Player ${winner} wins!`);
+    await sleep(550);
+
+    // FRAME 4: the loser's own avatar, grayed out and kicked away
+    $('winpose-loser-avatar').classList.add('fly');
+    await sleep(1400);
+
+    // the app "crashes" here on the epilogue; only the real window close
+    // (X) button gets you back to the desktop from this point on
+    await showEpilogue();
+  }
+
+  // ---------------------------------------------------------
+  // Gesture tracking (MediaPipe HandLandmarker) — single active
+  // player's board, full camera frame maps directly to its grid.
+  // ---------------------------------------------------------
+  let handLandmarker = null;
+  let handLoopActive = false;
+  let gestureState = {
+    lastCell: -1, dragging: false, dragFromPos: null,
+    pendingGesture: null, pendingFrames: 0, confirmed: 'other',
+  };
+  let lastPromptState = null;
+
+  function setDuelPrompt(text, ok) {
+    const el = $('duel-prompt');
+    if (lastPromptState === text) return;
+    lastPromptState = text;
+    el.textContent = text;
+    el.classList.toggle('ok', !!ok);
+  }
+
+  async function startGestureTracking() {
+    const gestureVideo = $('gesture-video');
+    try {
+      if (!mediaStream) await ensureCamera();
+      gestureVideo.srcObject = mediaStream;
+    } catch (e) {
+      setDuelPrompt('⚠ NO CAMERA — USE 🖱 MANUAL MODE BELOW', false);
+      enableManualMode();
+      return;
+    }
+
+    try {
+      handLandmarker = await getDuelHandLandmarker();
+    } catch (e) {
+      console.warn('Gesture tracking unavailable, falling back to manual mode.', e);
+      setDuelPrompt('⚠ GESTURE MODULE UNAVAILABLE — USE 🖱 MANUAL MODE BELOW', false);
+      enableManualMode();
+      return;
+    }
+
+    setDuelPrompt('✋ ONE HAND ONLY — ✊ FIST TO GRAB, ✋ OPEN TO DROP', true);
+    handLoopActive = true;
+    lastPromptState = null;
+    gestureState = {
+      lastCell: -1, dragging: false, dragFromPos: null,
+      pendingGesture: null, pendingFrames: 0, confirmed: 'other',
+    };
+    const cursor = $('duel-cursor');
+    cursor.classList.remove('p2');
+    if (activeBoard && activeBoard.playerId === 2) cursor.classList.add('p2');
+    requestAnimationFrame(predictLoop);
+  }
+
+  function stopGestureTracking() {
+    handLoopActive = false;
+    hideCursor();
+    cancelDrag();
+    clearHoverLock();
+  }
+
+  function cancelDrag() {
+    const st = gestureState;
+    if (st.dragging && activeBoard) activeBoard.cancelPickup(st.dragFromPos);
+    st.dragging = false;
+    st.dragFromPos = null;
+    hideDragGhost();
+    clearDropTargets();
+  }
+
+  function predictLoop() {
+    if (!handLoopActive) return;
+    const video = $('gesture-video');
+    if (handLandmarker && video.readyState >= 2) {
+      const result = handLandmarker.detectForVideo(video, performance.now());
+      processHands(result, performance.now());
+      drawSkeleton(result);
+    }
+    requestAnimationFrame(predictLoop);
+  }
+
+  function rejectMultipleHands() {
+    hideCursor();
+    cancelDrag();
+    clearHoverLock();
+    gestureState.lastCell = -1;
+    gestureState.pendingGesture = null;
+    gestureState.pendingFrames = 0;
+    gestureState.confirmed = 'other';
+    setDuelPrompt('⚠ ONLY ONE HAND ALLOWED — PUT YOUR OTHER HAND AWAY', false);
+  }
+
+  function processHands(result, now) {
+    const landmarks = result.landmarks || [];
+
+    if (landmarks.length === 0) {
+      hideCursor();
+      cancelDrag();
+      clearHoverLock();
+      gestureState.lastCell = -1;
+      gestureState.pendingGesture = null;
+      gestureState.pendingFrames = 0;
+      gestureState.confirmed = 'other';
+      setDuelPrompt('⚠ SHOW ONE HAND TO THE CAMERA', false);
+      return;
+    }
+
+    if (landmarks.length > 1) {
+      rejectMultipleHands();
+      return;
+    }
+
+    const lm = landmarks[0];
+    // palm center (wrist + middle-finger knuckle) stays put whether the
+    // hand is a fist or an open palm, so the cursor/ghost don't jump
+    // when the grab gesture changes shape
+    const wrist = lm[0], palmBase = lm[9];
+    const mx = clamp01(1 - (wrist.x + palmBase.x) / 2); // mirror to match displayed (selfie) view
+    const my = clamp01((wrist.y + palmBase.y) / 2);
+    updateCursor(mx, my);
+
+    const st = gestureState;
+    const raw = isFist(lm) ? 'fist' : (isOpenPalm(lm) ? 'open' : 'other');
+    if (raw === st.pendingGesture) {
+      st.pendingFrames++;
+    } else {
+      st.pendingGesture = raw;
+      st.pendingFrames = 1;
+    }
+    // require a few consecutive matching frames before acting on it, so
+    // a flickering hand-pose reading can't misfire a grab or a drop
+    if (st.pendingFrames >= CONFIG.GESTURE_HOLD_FRAMES) st.confirmed = raw;
+
+    setFistVisual(st.confirmed === 'fist');
+    handleHover(mx, my, now);
+    setDuelPrompt(
+      gestureState.dragging ? '✊ HOLDING — OPEN YOUR HAND TO DROP THE TILE' : '✋ ONE HAND — ✊ FIST TO GRAB A TILE',
+      true
+    );
+  }
+
+  function posFromCoords(lx, ly) {
+    const n = CONFIG.GRID;
+    const col = Math.min(n - 1, Math.floor(lx * n));
+    const row = Math.min(n - 1, Math.floor(ly * n));
+    return row * n + col;
+  }
+
+  function handleHover(lx, ly, now) {
+    const board = activeBoard;
+    const st = gestureState;
+    if (!board || board.solved) return;
+    const outOfBounds = lx < 0 || lx > 1 || ly < 0 || ly > 1;
+
+    if (outOfBounds) {
+      st.lastCell = -1;
+      clearHoverLock();
+      // opened off-frame mid-drag -- cancel rather than guess a drop target
+      if (st.dragging && st.confirmed === 'open') cancelDrag();
+      updateDragGhost(lx, ly, false);
+      return;
+    }
+
+    const pos = posFromCoords(lx, ly);
+
+    // --- hold a fist to grab, drag it around, open the hand to drop it ---
+    // (the `!st.dragging` / `st.dragging` guards make each transition
+    // fire exactly once per fist->open cycle, no matter how many frames
+    // the confirmed pose is held for)
+    if (st.confirmed === 'fist' && !st.dragging) {
+      board.pickUp(pos);
+      st.dragging = true;
+      st.dragFromPos = pos;
+    } else if (st.confirmed === 'open' && st.dragging) {
+      board.dropAt(st.dragFromPos, pos);
+      st.dragging = false;
+      st.dragFromPos = null;
+      hideDragGhost();
+      clearDropTargets();
+    }
+    st.lastCell = pos;
+
+    if (st.dragging) {
+      updateDragGhost(lx, ly, true);
+      highlightDropTarget(pos);
+      clearHoverLock();
+      return;
+    }
+    updateDragGhost(lx, ly, false);
+
+    // an open hand or a bare finger can only lock onto (highlight) the
+    // cell it's over -- only a held fist can grab a tile
+    if (st.confirmed === 'fist') clearHoverLock(); else highlightHoverLock(pos);
+  }
+
+  let dropTargetPos = null;
+  let hoverLockPos = null;
+  function highlightHoverLock(pos) {
+    if (!activeBoard || pos === hoverLockPos) return;
+    clearHoverLock();
+    activeBoard.pieces[pos].classList.add('hover-lock');
+    hoverLockPos = pos;
+  }
+  function clearHoverLock() {
+    if (activeBoard && hoverLockPos !== null) activeBoard.pieces[hoverLockPos].classList.remove('hover-lock');
+    hoverLockPos = null;
+  }
+  function highlightDropTarget(pos) {
+    if (!activeBoard || pos === dropTargetPos) return;
+    clearDropTargets();
+    activeBoard.pieces[pos].classList.add('drop-target');
+    dropTargetPos = pos;
+  }
+  function clearDropTargets() {
+    if (activeBoard) activeBoard.pieces.forEach((p) => p.classList.remove('drop-target'));
+    dropTargetPos = null;
+  }
+
+  function updateDragGhost(lx, ly, show) {
+    const ghost = $('duel-drag-ghost');
+    if (!show || !activeBoard) { ghost.classList.remove('show'); return; }
+    const fromPiece = activeBoard.pieces[gestureState.dragFromPos];
+    ghost.style.backgroundImage = fromPiece.style.backgroundImage;
+    ghost.style.backgroundSize = fromPiece.style.backgroundSize;
+    ghost.style.backgroundPosition = fromPiece.style.backgroundPosition;
+    ghost.style.left = `${clamp01(lx) * 100}%`;
+    ghost.style.top = `${clamp01(ly) * 100}%`;
+    ghost.classList.add('show');
+  }
+  function hideDragGhost() { $('duel-drag-ghost').classList.remove('show'); }
+
+  function updateCursor(lx, ly) {
+    const el = $('duel-cursor');
+    el.style.display = (lx < 0 || lx > 1 || ly < 0 || ly > 1) ? 'none' : 'block';
+    el.style.left = `${clamp01(lx) * 100}%`;
+    el.style.top = `${clamp01(ly) * 100}%`;
+  }
+  function hideCursor() { $('duel-cursor').style.display = 'none'; }
+  function setFistVisual(fisted) { $('duel-cursor').classList.toggle('fist', fisted); }
+
+  function drawSkeleton(result) {
+    const canvas = $('gesture-overlay');
+    const video = $('gesture-video');
+    if (!canvas.width || canvas.width !== video.clientWidth) {
+      canvas.width = video.clientWidth;
+      canvas.height = video.clientHeight;
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const CONNECTIONS = [
+      [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+      [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
+      [0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17],
+    ];
+    (result.landmarks || []).slice(0, 1).forEach((lm) => {
+      const color = activeBoard && activeBoard.playerId === 2 ? '#ff5fd1' : '#35c3ff';
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+      ctx.beginPath();
+      CONNECTIONS.forEach(([a, b]) => {
+        const pa = lm[a], pb = lm[b];
+        ctx.moveTo((1 - pa.x) * canvas.width, pa.y * canvas.height);
+        ctx.lineTo((1 - pb.x) * canvas.width, pb.y * canvas.height);
+      });
+      ctx.stroke();
+      lm.forEach((p) => {
+        ctx.beginPath();
+        ctx.arc((1 - p.x) * canvas.width, p.y * canvas.height, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------
+  // Window chrome (decorative + reset)
+  // ---------------------------------------------------------
+  $('xp-close').addEventListener('click', resetAll);
+  $('btn-reset-all').addEventListener('click', resetAll);
+  $('btn-close').addEventListener('click', resetAll);
+  $('xp-max').addEventListener('click', () => $('xp-window').classList.toggle('maximized'));
+
+  $('btn-campaign-continue').addEventListener('click', goToNextChapter);
+
+  // once the app "crashes" at the end, any key press closes it back to the desktop
+  document.addEventListener('keydown', () => {
+    if ($('xp-window').classList.contains('app-frozen')) resetAll();
+  });
+
+  function resetAll() {
+    if ($('xp-window').classList.contains('app-frozen') && campaignComplete) {
+      goToNextChapter();
+      return;
+    }
+    campaignComplete = false;
+    const continueBtn = $('btn-campaign-continue');
+    if (continueBtn) continueBtn.hidden = true;
+    handLoopActive = false;
+    hideDragGhost();
+    clearDropTargets();
+    clearHoverLock();
+    clearTimeout(scanAutoAdvanceTimer);
+    scanAutoAdvanceTimer = null;
+    captureLoopActive = false;
+    duelResolve = null;
+    activeBoard = null;
+    lastHandAnchors = null;
+    clearDuelLimitTimer();
+    Object.values(timers).forEach((t) => { if (t.raf) cancelAnimationFrame(t.raf); t.finished = true; });
+    stopCamera();
+    groupPhotoDataUrl = null;
+    $('xp-window').classList.remove('app-frozen');
+    $('xp-title-text').textContent = 'HumanVerify_Puzzle.exe — Attendance System';
+    $('xp-window').hidden = true;
+    $('xp-taskbar-task').hidden = true;
+    showWelcomeIntro();
+  }
+
+  function tickClock() {
+    const now = new Date();
+    $('xp-clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  tickClock();
+  setInterval(tickClock, 15000);
+
+  // ---------------------------------------------------------
+  // Public mount API (for later embedding as the first minigame
+  // inside a larger game shell)
+  // ---------------------------------------------------------
+  window.HumanVerifyPuzzleGame = {
+    restart: resetAll,
+    getResult: () => ({
+      player1Ms: timers[1].elapsed,
+      player2Ms: timers[2].elapsed,
+      winner: timers[1].solved && !timers[2].solved ? 1
+        : (!timers[1].solved && timers[2].solved ? 2
+          : (!timers[1].solved && !timers[2].solved ? 'studio'
+            : (timers[1].elapsed === timers[2].elapsed ? null : (timers[1].elapsed < timers[2].elapsed ? 1 : 2)))),
+    }),
+  };
+  // Auto-launch: the intro shows itself, no click needed to open it.
+  showWelcomeIntro();
+})();
